@@ -1,0 +1,36 @@
+name: Fork Validation Lab
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  toolchain-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Verify Foundry
+        run: |
+          set -e
+          forge --version
+          anvil --version
+          cast --version
+
+      - name: Basic smoke test
+        run: |
+          echo "FOUNDRY_STATUS=READY"
+          forge --version
+          anvil --version
+          cast --version
