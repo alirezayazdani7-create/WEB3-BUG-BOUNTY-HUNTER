@@ -11,6 +11,9 @@ permissions:
 
 jobs:
 
+  # ============================================================
+  # 1) RPC PREFLIGHT
+  # ============================================================
   rpc-preflight:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -23,129 +26,174 @@ jobs:
         env:
           ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
         run: |
-          set -e
+          set -euo pipefail
+
           test -n "$ETH_RPC_URL"
+
           echo "RPC_SECRET_PRESENT=YES"
-          echo "CHAIN_ID:"
-          cast chain-id --rpc-url "$ETH_RPC_URL"
-          echo "BLOCK_NUMBER:"
-          cast block-number --rpc-url "$ETH_RPC_URL"
+
+          echo "FOUNDRY_VERSION:"
+          forge --version
+
+          echo "CAST_VERSION:"
+          cast --version
+
+          echo "ANVIL_VERSION:"
+          anvil --version
+
+          echo "MAINNET_CHAIN_ID:"
+          MAIN_CHAIN_ID="$(cast chain-id --rpc-url "$ETH_RPC_URL")"
+          echo "$MAIN_CHAIN_ID"
+
+          test "$MAIN_CHAIN_ID" = "1"
+
+          echo "MAINNET_BLOCK:"
+          MAIN_BLOCK="$(cast block-number --rpc-url "$ETH_RPC_URL")"
+          echo "$MAIN_BLOCK"
+
+          test "$MAIN_BLOCK" -gt 0
+
           echo "RPC_PREFLIGHT=PASS"
 
+
+  # ============================================================
+  # 2) REAL LOCAL MAINNET FORK
+  # ============================================================
   fork-smoke:
     needs: rpc-preflight
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
+
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
+      # --------------------------------------------------------
+      # Start Anvil as an isolated local fork
+      # --------------------------------------------------------
       - name: Start isolated Ethereum Mainnet Fork
         env:
           ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
         run: |
-          set -e
+          set -euo pipefail
 
           test -n "$ETH_RPC_URL"
+
+          rm -f anvil.log
+          rm -f anvil.pid
+
+          echo "STARTING_ANVIL_FORK..."
 
           anvil \
             --fork-url "$ETH_RPC_URL" \
             --host 127.0.0.1 \
             --port 8545 \
+            --chain-id 31337 \
             --accounts 2 \
             > anvil.log 2>&1 &
 
-          echo $! > anvil.pid
+          ANVIL_PID=$!
+          echo "$ANVIL_PID" > anvil.pid
+
+          echo "ANVIL_PID=$ANVIL_PID"
+
+          echo "WAITING_FOR_LOCAL_RPC..."
+
+          READY=0
 
           for i in $(seq 1 30); do
-            if cast chain-id --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1; then
+            if cast chain-id \
+              --rpc-url http://127.0.0.1:8545 \
+              >/dev/null 2>&1; then
+
+              READY=1
+              echo "LOCAL_RPC_READY=YES"
               break
             fi
+
             sleep 1
           done
 
+          if [ "$READY" != "1" ]; then
+            echo "LOCAL_RPC_READY=NO"
+            echo "===== ANVIL LOG ====="
+            cat anvil.log || true
+            exit 1
+          fi
+
+          echo
           echo "LOCAL_CHAIN_ID:"
-          cast chain-id --rpc-url http://127.0.0.1:8545
+          LOCAL_CHAIN_ID="$(cast chain-id --rpc-url http://127.0.0.1:8545)"
+          echo "$LOCAL_CHAIN_ID"
 
+          test "$LOCAL_CHAIN_ID" = "31337"
+
+          echo
           echo "FORK_BLOCK:"
-          cast block-number --rpc-url http://127.0.0.1:8545
+          FORK_BLOCK="$(cast block-number --rpc-url http://127.0.0.1:8545)"
+          echo "$FORK_BLOCK"
 
+          test "$FORK_BLOCK" -gt 0
+
+          echo
           echo "FORK_LATEST_HASH:"
-          cast block latest --rpc-url http://127.0.0.1:8545 --json | head -c 300
+          cast block latest \
+            --rpc-url http://127.0.0.1:8545 \
+            --json | head -c 500
 
+          echo
           echo
           echo "ANVIL_FORK=PASS"
 
-      - name: Verify fork is isolated
+
+      # --------------------------------------------------------
+      # Verify that the local node is NOT the main RPC
+      # --------------------------------------------------------
+      - name: Verify fork isolation
         env:
           ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
         run: |
-          set -e
+          set -euo pipefail
 
-          LOCAL_CHAIN=$(cast chain-id --rpc-url http://127.0.0.1:8545)
-          MAIN_CHAIN=$(cast chain-id --rpc-url "$ETH_RPC_URL")
+          echo "READING_MAINNET_CHAIN_ID..."
 
-          test "$MAIN_CHAIN" = "1"
-          test "$LOCAL_CHAIN" = "31337"
+          MAIN_CHAIN_ID="$(cast chain-id \
+            --rpc-url "$ETH_RPC_URL")"
 
-          echo "MAINNET_CHAIN_ID=$MAIN_CHAIN"
-          echo "LOCAL_FORK_CHAIN_ID=$LOCAL_CHAIN"
-          echo "ISOLATION_CHECK=PASS"
+          echo "MAINNET_CHAIN_ID=$MAIN_CHAIN_ID"
 
-      - name: Inspect Ethena contracts on fork
-        run: |
-          set -e
+          test "$MAIN_CHAIN_ID" = "1"
 
-          USDE=0x4c9EDD5852cd905f086C759E8383e09bff1E68B3
-          SUSDE=0x9D39A5DE30e57443BfF2A8307A4256c8797A3497
-
-          echo "USDe:"
-          cast code "$USDE" --rpc-url http://127.0.0.1:8545 | head -c 80
           echo
+          echo "READING_LOCAL_CHAIN_ID..."
 
-          echo "sUSDe:"
-          cast code "$SUSDE" --rpc-url http://127.0.0.1:8545 | head -c 80
+          LOCAL_CHAIN_ID="$(cast chain-id \
+            --rpc-url http://127.0.0.1:8545)"
+
+          echo "LOCAL_FORK_CHAIN_ID=$LOCAL_CHAIN_ID"
+
+          test "$LOCAL_CHAIN_ID" = "31337"
+
           echo
+          echo "CHECKING_LOCAL_BLOCK..."
 
-          echo "SUSDE_TOTAL_SUPPLY:"
-          cast call "$SUSDE" "totalSupply()(uint256)" \
-            --rpc-url http://127.0.0.1:8545
+          LOCAL_BLOCK="$(cast block-number \
+            --rpc-url http://127.0.0.1:8545)"
 
-          echo "SUSDE_ASSET:"
-          cast call "$SUSDE" "asset()(address)" \
-            --rpc-url http://127.0.0.1:8545
+          echo "LOCAL_FORK_BLOCK=$LOCAL_BLOCK"
 
-          echo "ETHENA_FORK_INSPECTION=PASS"
+          test "$LOCAL_BLOCK" -gt 0
 
-      - name: Stop local fork
-        if: always()
-        run: |
-          if test -f anvil.pid; then
-            kill "$(cat anvil.pid)" || true
-          fi
+          echo
+          echo "CHECKING_MAINNET_BLOCK..."
 
-  toolchain-smoke:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+          MAIN_BLOCK="$(cast block-number \
+            --rpc-url "$ETH_RPC_URL")"
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+          echo "MAINNET_BLOCK=$MAIN_BLOCK"
 
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
+          test "$MAIN_BLOCK" -gt 0
 
-      - name: Verify Foundry
-        run: |
-          set -e
-          forge --version
-          anvil --version
-          cast --version
-
-      - name: Basic smoke test
-        run: |
-          echo "FOUNDRY_STATUS=READY"
-          forge --version
-          anvil --version
-          cast --version
+          echo
+         
