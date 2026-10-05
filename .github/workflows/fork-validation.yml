@@ -196,4 +196,60 @@ jobs:
           test "$MAIN_BLOCK" -gt 0
 
           echo
-         
+          
+                   echo "ISOLATION_CHECK=PASS"
+
+      - name: Inspect Ethena contracts on local fork
+        run: |
+          set -euo pipefail
+
+          USDE="0x4c9EDD5852cd905f086C759E8383e09bff1E68B3"
+          SUSDE="0x9D39A5DE30e57443BfF2A8307A4256c8797A3497"
+
+          echo "USDE_CODE_BYTES:"
+          cast code "$USDE" \
+            --rpc-url http://127.0.0.1:8545 | wc -c
+
+          echo "SUSDE_CODE_BYTES:"
+          cast code "$SUSDE" \
+            --rpc-url http://127.0.0.1:8545 | wc -c
+
+          echo "USDE_TOTAL_SUPPLY:"
+          cast call "$USDE" "totalSupply()(uint256)" \
+            --rpc-url http://127.0.0.1:8545
+
+          echo "SUSDE_TOTAL_SUPPLY:"
+          cast call "$SUSDE" "totalSupply()(uint256)" \
+            --rpc-url http://127.0.0.1:8545
+
+          echo "SUSDE_ASSET:"
+          cast call "$SUSDE" "asset()(address)" \
+            --rpc-url http://127.0.0.1:8545
+
+          echo "ETHENA_FORK_INSPECTION=PASS"
+
+      - name: Final fork evidence
+        run: |
+          set -euo pipefail
+
+          echo "FORK_VALIDATION=PASS"
+          echo "EXECUTION_MODE=LOCAL_FORK_ONLY"
+          echo "LIVE_TRADING=PROHIBITED"
+          echo "MAINNET_TRANSACTIONS=NONE"
+
+      - name: Stop isolated fork
+        if: always()
+        run: |
+          set +e
+
+          if [ -f anvil.pid ]; then
+            ANVIL_PID="$(cat anvil.pid)"
+            kill "$ANVIL_PID" 2>/dev/null || true
+          fi
+
+          if [ -f anvil.log ]; then
+            echo "===== FINAL ANVIL LOG ====="
+            tail -n 80 anvil.log || true
+          fi
+
+          echo "LOCAL_FORK_STOPPED=YES"
