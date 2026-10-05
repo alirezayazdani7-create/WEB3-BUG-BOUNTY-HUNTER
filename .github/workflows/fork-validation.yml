@@ -10,6 +10,27 @@ permissions:
   contents: read
 
 jobs:
+  rpc-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Test Ethereum RPC
+        env:
+          ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
+        run: |
+          set -e
+          test -n "$ETH_RPC_URL"
+          echo "RPC_SECRET_PRESENT=YES"
+          echo "CHAIN_ID:"
+          cast chain-id --rpc-url "$ETH_RPC_URL"
+          echo "BLOCK_NUMBER:"
+          cast block-number --rpc-url "$ETH_RPC_URL"
+          echo "RPC_PREFLIGHT=PASS"
+
   toolchain-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 15
