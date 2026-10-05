@@ -10,6 +10,7 @@ permissions:
   contents: read
 
 jobs:
+
   rpc-preflight:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -30,6 +31,99 @@ jobs:
           echo "BLOCK_NUMBER:"
           cast block-number --rpc-url "$ETH_RPC_URL"
           echo "RPC_PREFLIGHT=PASS"
+
+  fork-smoke:
+    needs: rpc-preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Start isolated Ethereum Mainnet Fork
+        env:
+          ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
+        run: |
+          set -e
+
+          test -n "$ETH_RPC_URL"
+
+          anvil \
+            --fork-url "$ETH_RPC_URL" \
+            --host 127.0.0.1 \
+            --port 8545 \
+            --accounts 2 \
+            > anvil.log 2>&1 &
+
+          echo $! > anvil.pid
+
+          for i in $(seq 1 30); do
+            if cast chain-id --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          echo "LOCAL_CHAIN_ID:"
+          cast chain-id --rpc-url http://127.0.0.1:8545
+
+          echo "FORK_BLOCK:"
+          cast block-number --rpc-url http://127.0.0.1:8545
+
+          echo "FORK_LATEST_HASH:"
+          cast block latest --rpc-url http://127.0.0.1:8545 --json | head -c 300
+
+          echo
+          echo "ANVIL_FORK=PASS"
+
+      - name: Verify fork is isolated
+        env:
+          ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
+        run: |
+          set -e
+
+          LOCAL_CHAIN=$(cast chain-id --rpc-url http://127.0.0.1:8545)
+          MAIN_CHAIN=$(cast chain-id --rpc-url "$ETH_RPC_URL")
+
+          test "$MAIN_CHAIN" = "1"
+          test "$LOCAL_CHAIN" = "31337"
+
+          echo "MAINNET_CHAIN_ID=$MAIN_CHAIN"
+          echo "LOCAL_FORK_CHAIN_ID=$LOCAL_CHAIN"
+          echo "ISOLATION_CHECK=PASS"
+
+      - name: Inspect Ethena contracts on fork
+        run: |
+          set -e
+
+          USDE=0x4c9EDD5852cd905f086C759E8383e09bff1E68B3
+          SUSDE=0x9D39A5DE30e57443BfF2A8307A4256c8797A3497
+
+          echo "USDe:"
+          cast code "$USDE" --rpc-url http://127.0.0.1:8545 | head -c 80
+          echo
+
+          echo "sUSDe:"
+          cast code "$SUSDE" --rpc-url http://127.0.0.1:8545 | head -c 80
+          echo
+
+          echo "SUSDE_TOTAL_SUPPLY:"
+          cast call "$SUSDE" "totalSupply()(uint256)" \
+            --rpc-url http://127.0.0.1:8545
+
+          echo "SUSDE_ASSET:"
+          cast call "$SUSDE" "asset()(address)" \
+            --rpc-url http://127.0.0.1:8545
+
+          echo "ETHENA_FORK_INSPECTION=PASS"
+
+      - name: Stop local fork
+        if: always()
+        run: |
+          if test -f anvil.pid; then
+            kill "$(cat anvil.pid)" || true
+          fi
 
   toolchain-smoke:
     runs-on: ubuntu-latest
