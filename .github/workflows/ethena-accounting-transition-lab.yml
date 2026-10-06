@@ -21,15 +21,25 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$ETH_RPC_URL"
-          anvil --fork-url "$ETH_RPC_URL" --host 127.0.0.1 --port 8545 --chain-id 31337 --accounts 2 > anvil.log 2>&1 &
+
+          anvil --fork-url "$ETH_RPC_URL" \
+            --host 127.0.0.1 \
+            --port 8545 \
+            --chain-id 31337 \
+            --accounts 2 > anvil.log 2>&1 &
+
           echo $! > anvil.pid
+
           RPC="http://127.0.0.1:8545"
+
           for i in $(seq 1 30); do
             cast chain-id --rpc-url "$RPC" >/dev/null 2>&1 && break
             sleep 1
           done
+
           test "$(cast chain-id --rpc-url "$RPC")" = "31337"
           test "$(cast chain-id --rpc-url "$ETH_RPC_URL")" = "1"
+
           echo "LOCAL_FORK=PASS"
           echo "FORK_BLOCK=$(cast block-number --rpc-url "$RPC")"
 
@@ -37,93 +47,374 @@ jobs:
         timeout-minutes: 9
         run: |
           set -u
+
           RPC="http://127.0.0.1:8545"
+
           SUSDE="0x9D39A5DE30e57443BfF2A8307A4256c8797A3497"
           USDE="0x4c9EDD5852cd905f086C759E8383e09bff1E68B3"
+
           HOLDER="0xA469b399df1c7b4bd8569048d889f131329dffa1"
           RECEIVER="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+
           BLACKLIST_MANAGER="0x3B0AAf6e6fCd4a7cEEf8c92C32DFeA9E64dC1862"
 
-          rpc() { cast rpc "$@" --rpc-url "$RPC"; }
+          rpc() {
+            cast rpc "$@" --rpc-url "$RPC"
+          }
+
           impersonate() {
             rpc anvil_impersonateAccount "$1" >/dev/null
             rpc anvil_setBalance "$1" 0x3635C9ADC5DEA0000000000 >/dev/null
           }
-          snap() { rpc evm_snapshot | tr -d '"' | tail -n 1; }
-          rev() { rpc evm_revert "$1" >/dev/null; }
+
+          snap() {
+            rpc evm_snapshot | tr -d '"' | tail -n 1
+          }
+
+          rev() {
+            rpc evm_revert "$1" >/dev/null
+          }
+
           tx() {
-            local from="$1"; local to="$2"; local sig="$3"; shift 3
-            timeout 45s cast send --unlocked --from "$from" "$to" "$sig" "$@" --rpc-url "$RPC" >/tmp/cast.out 2>/tmp/cast.err
+            local from="$1"
+            local to="$2"
+            local sig="$3"
+            shift 3
+
+            timeout 45s cast send \
+              --unlocked \
+              --from "$from" \
+              "$to" \
+              "$sig" \
+              "$@" \
+              --rpc-url "$RPC" \
+              >/tmp/cast.out \
+              2>/tmp/cast.err
           }
-          usde_bal() { cast call "$USDE" "balanceOf(address)(uint256)" "$1" --rpc-url "$RPC" | awk 'NR==1 {print $1}'; }
-          susde_bal() { cast call "$SUSDE" "balanceOf(address)(uint256)" "$1" --rpc-url "$RPC" | awk 'NR==1 {print $1}'; }
-          vault_assets() { cast call "$SUSDE" "totalAssets()(uint256)" --rpc-url "$RPC" | awk 'NR==1 {print $1}'; }
-          silo_addr() { cast call "$SUSDE" "silo()(address)" --rpc-url "$RPC"; }
-          silo_assets() { usde_bal "$(silo_addr)"; }
-          pending_amount() { cast call "$SUSDE" "cooldowns(address)(uint104,uint152)" "$1" --rpc-url "$RPC" | awk 'NR==2 {print $1}'; }
-          pending_end() { cast call "$SUSDE" "cooldowns(address)(uint104,uint152)" "$1" --rpc-url "$RPC" | awk 'NR==1 {print $1}'; }
-          economic_assets() { python3 - "$1" "$2" <<'PY'
-          import sys
-          print(int(sys.argv[1])+int(sys.argv[2]))
-          PY
+
+          usde_bal() {
+            cast call \
+              "$USDE" \
+              "balanceOf(address)(uint256)" \
+              "$1" \
+              --rpc-url "$RPC" |
+              awk 'NR==1 {print $1}'
           }
+
+          susde_bal() {
+            cast call \
+              "$SUSDE" \
+              "balanceOf(address)(uint256)" \
+              "$1" \
+              --rpc-url "$RPC" |
+              awk 'NR==1 {print $1}'
+          }
+
+          vault_assets() {
+            cast call \
+              "$SUSDE" \
+              "totalAssets()(uint256)" \
+              --rpc-url "$RPC" |
+              awk 'NR==1 {print $1}'
+          }
+
+          silo_addr() {
+            cast call \
+              "$SUSDE" \
+              "silo()(address)" \
+              --rpc-url "$RPC"
+          }
+
+          silo_assets() {
+            usde_bal "$(silo_addr)"
+          }
+
+          pending_amount() {
+            cast call \
+              "$SUSDE" \
+              "cooldowns(address)(uint104,uint152)" \
+              "$1" \
+              --rpc-url "$RPC" |
+              awk 'NR==2 {print $1}'
+          }
+
+          pending_end() {
+            cast call \
+              "$SUSDE" \
+              "cooldowns(address)(uint104,uint152)" \
+              "$1" \
+              --rpc-url "$RPC" |
+              awk 'NR==1 {print $1}'
+          }
+
+          economic_assets() {
+            python3 - "$1" "$2" <<'PY'
+import sys
+print(int(sys.argv[1]) + int(sys.argv[2]))
+PY
+          }
+
+          delta() {
+            python3 - "$1" "$2" <<'PY'
+import sys
+print(int(sys.argv[2]) - int(sys.argv[1]))
+PY
+          }
+
           check_conservation() {
-            local label="$1"; local before="$2"; local after="$3"
-            if [ "$before" = "$after" ]; then echo "$label=PASS"; else echo "$label=FAIL BEFORE=$before AFTER=$after"; fi
+            local label="$1"
+            local before="$2"
+            local after="$3"
+
+            if [ "$before" = "$after" ]; then
+              echo "$label=PASS"
+            else
+              echo "$label=FAIL BEFORE=$before AFTER=$after"
+            fi
           }
 
           FULL_ROLE="$(cast keccak "FULL_RESTRICTED_STAKER_ROLE")"
           BLACKLIST_ROLE="$(cast keccak "BLACKLIST_MANAGER_ROLE")"
-          ADMIN="$(cast call "$SUSDE" "owner()(address)" --rpc-url "$RPC" | tr '[:upper:]' '[:lower:]')"
 
-          impersonate "$HOLDER"; impersonate "$RECEIVER"; impersonate "$ADMIN"; impersonate "$BLACKLIST_MANAGER"
+          ADMIN="$(
+            cast call \
+              "$SUSDE" \
+              "owner()(address)" \
+              --rpc-url "$RPC" |
+              tr '[:upper:]' '[:lower:]'
+          )"
 
-          ADMIN_OK="$(cast call "$SUSDE" "hasRole(bytes32,address)(bool)" "$(cast call "$SUSDE" "DEFAULT_ADMIN_ROLE()(bytes32)" --rpc-url "$RPC")" "$ADMIN" --rpc-url "$RPC")"
-          MANAGER_OK="$(cast call "$SUSDE" "hasRole(bytes32,address)(bool)" "$BLACKLIST_ROLE" "$BLACKLIST_MANAGER" --rpc-url "$RPC")"
+          impersonate "$HOLDER"
+          impersonate "$RECEIVER"
+          impersonate "$ADMIN"
+          impersonate "$BLACKLIST_MANAGER"
+
+          ADMIN_ROLE="$(
+            cast call \
+              "$SUSDE" \
+              "DEFAULT_ADMIN_ROLE()(bytes32)" \
+              --rpc-url "$RPC"
+          )"
+
+          ADMIN_OK="$(
+            cast call \
+              "$SUSDE" \
+              "hasRole(bytes32,address)(bool)" \
+              "$ADMIN_ROLE" \
+              "$ADMIN" \
+              --rpc-url "$RPC"
+          )"
+
+          MANAGER_OK="$(
+            cast call \
+              "$SUSDE" \
+              "hasRole(bytes32,address)(bool)" \
+              "$BLACKLIST_ROLE" \
+              "$BLACKLIST_MANAGER" \
+              --rpc-url "$RPC"
+          )"
+
           echo "ADMIN_ROLE_OK=$ADMIN_OK"
           echo "BLACKLIST_MANAGER_OK=$MANAGER_OK"
-          if [ "$ADMIN_OK" != "true" ] || [ "$MANAGER_OK" != "true" ]; then echo "MATRIX_STATUS=INCONCLUSIVE_ROLE_SETUP"; exit 0; fi
+
+          if [ "$ADMIN_OK" != "true" ] || [ "$MANAGER_OK" != "true" ]; then
+            echo "MATRIX_STATUS=INCONCLUSIVE_ROLE_SETUP"
+            exit 0
+          fi
 
           echo "=== A01 single cooldown: vault+silo conservation ==="
-          S="$(snap)"; V0="$(vault_assets)"; Z0="$(silo_assets)"; E0="$(economic_assets "$V0" "$Z0")"
-          if tx "$HOLDER" "$SUSDE" "cooldownShares(uint256)" "1000000000000000000"; then
-            V1="$(vault_assets)"; Z1="$(silo_assets)"; E1="$(economic_assets "$V1" "$Z1")"
-            echo "A01_BEFORE_ECONOMIC=$E0"; echo "A01_AFTER_ECONOMIC=$E1"; echo "A01_PENDING=$(pending_amount "$HOLDER")"
-            check_conservation "A01_ECONOMIC_CONSERVATION" "$E0" "$E1"
-            echo "A01_SILO_DELTA=$(python3 - "$Z0" "$Z1" <<'PY' import sys print(int(sys.argv[2])-int(sys.argv[1])) PY )"
+
+          S="$(snap)"
+          V0="$(vault_assets)"
+          Z0="$(silo_assets)"
+          E0="$(economic_assets "$V0" "$Z0")"
+
+          if tx \
+            "$HOLDER" \
+            "$SUSDE" \
+            "cooldownShares(uint256)" \
+            "1000000000000000000"
+          then
+
+            V1="$(vault_assets)"
+            Z1="$(silo_assets)"
+            E1="$(economic_assets "$V1" "$Z1")"
+
+            echo "A01_BEFORE_ECONOMIC=$E0"
+            echo "A01_AFTER_ECONOMIC=$E1"
+            echo "A01_PENDING=$(pending_amount "$HOLDER")"
+
+            check_conservation \
+              "A01_ECONOMIC_CONSERVATION" \
+              "$E0" \
+              "$E1"
+
+            echo "A01_SILO_DELTA=$(delta "$Z0" "$Z1")"
             echo "A01_RESULT=MEASURED"
-          else echo "A01_RESULT=INCONCLUSIVE"; fi
+
+          else
+            echo "A01_RESULT=INCONCLUSIVE"
+          fi
+
           rev "$S"
 
           echo "=== A02 cooldown -> FULL -> redistribute: no economic creation ==="
-          S="$(snap)"; V0="$(vault_assets)"; Z0="$(silo_assets)"; E0="$(economic_assets "$V0" "$Z0")"
-          if tx "$HOLDER" "$SUSDE" "cooldownShares(uint256)" "1000000000000000000" && tx "$BLACKLIST_MANAGER" "$SUSDE" "addToBlacklist(address,bool)" "$HOLDER" "true" && tx "$ADMIN" "$SUSDE" "redistributeLockedAmount(address,address)" "$HOLDER" "$RECEIVER"; then
-            V2="$(vault_assets)"; Z2="$(silo_assets)"; E2="$(economic_assets "$V2" "$Z2")"
-            check_conservation "A02_ECONOMIC_CONSERVATION" "$E0" "$E2"
-            echo "A02_PENDING=$(pending_amount "$HOLDER")"; echo "A02_HOLDER_SHARES=$(susde_bal "$HOLDER")"; echo "A02_RECEIVER_SHARES=$(susde_bal "$RECEIVER")"; echo "A02_RESULT=MEASURED"
-          else echo "A02_RESULT=INCONCLUSIVE"; fi
+
+          S="$(snap)"
+          V0="$(vault_assets)"
+          Z0="$(silo_assets)"
+          E0="$(economic_assets "$V0" "$Z0")"
+
+          if \
+            tx \
+              "$HOLDER" \
+              "$SUSDE" \
+              "cooldownShares(uint256)" \
+              "1000000000000000000" &&
+            tx \
+              "$BLACKLIST_MANAGER" \
+              "$SUSDE" \
+              "addToBlacklist(address,bool)" \
+              "$HOLDER" \
+              "true" &&
+            tx \
+              "$ADMIN" \
+              "$SUSDE" \
+              "redistributeLockedAmount(address,address)" \
+              "$HOLDER" \
+              "$RECEIVER"
+          then
+
+            V2="$(vault_assets)"
+            Z2="$(silo_assets)"
+            E2="$(economic_assets "$V2" "$Z2")"
+
+            check_conservation \
+              "A02_ECONOMIC_CONSERVATION" \
+              "$E0" \
+              "$E2"
+
+            echo "A02_PENDING=$(pending_amount "$HOLDER")"
+            echo "A02_HOLDER_SHARES=$(susde_bal "$HOLDER")"
+            echo "A02_RECEIVER_SHARES=$(susde_bal "$RECEIVER")"
+            echo "A02_RESULT=MEASURED"
+
+          else
+            echo "A02_RESULT=INCONCLUSIVE"
+          fi
+
           rev "$S"
 
           echo "=== A03 two cooldowns -> FULL -> redistribute: aggregate claim ==="
-          S="$(snap)"; Z0="$(silo_assets)"
-          if tx "$HOLDER" "$SUSDE" "cooldownShares(uint256)" "1000000000000000000" && tx "$HOLDER" "$SUSDE" "cooldownShares(uint256)" "1000000000000000000"; then
-            Z3="$(silo_assets)"; P3="$(pending_amount "$HOLDER")"
-            echo "A03_PENDING_AFTER_TWO=$P3"; echo "A03_SILO_DELTA=$(python3 - "$Z0" "$Z3" <<'PY' import sys print(int(sys.argv[2])-int(sys.argv[1])) PY )"; echo "A03_COOLDOWN_END=$(pending_end "$HOLDER")"
-            if tx "$BLACKLIST_MANAGER" "$SUSDE" "addToBlacklist(address,bool)" "$HOLDER" "true" && tx "$ADMIN" "$SUSDE" "redistributeLockedAmount(address,address)" "$HOLDER" "$RECEIVER"; then
-              echo "A03_RESTRICT_AND_REDISTRIBUTE=PASS"; echo "A03_PENDING_FINAL=$(pending_amount "$HOLDER")"; echo "A03_RESULT=MEASURED"
-            else echo "A03_RESULT=INCONCLUSIVE"; fi
-          else echo "A03_RESULT=INCONCLUSIVE"; fi
+
+          S="$(snap)"
+          Z0="$(silo_assets)"
+
+          if \
+            tx \
+              "$HOLDER" \
+              "$SUSDE" \
+              "cooldownShares(uint256)" \
+              "1000000000000000000" &&
+            tx \
+              "$HOLDER" \
+              "$SUSDE" \
+              "cooldownShares(uint256)" \
+              "1000000000000000000"
+          then
+
+            Z3="$(silo_assets)"
+            P3="$(pending_amount "$HOLDER")"
+
+            echo "A03_PENDING_AFTER_TWO=$P3"
+            echo "A03_SILO_DELTA=$(delta "$Z0" "$Z3")"
+            echo "A03_COOLDOWN_END=$(pending_end "$HOLDER")"
+
+            if \
+              tx \
+                "$BLACKLIST_MANAGER" \
+                "$SUSDE" \
+                "addToBlacklist(address,bool)" \
+                "$HOLDER" \
+                "true" &&
+              tx \
+                "$ADMIN" \
+                "$SUSDE" \
+                "redistributeLockedAmount(address,address)" \
+                "$HOLDER" \
+                "$RECEIVER"
+            then
+
+              echo "A03_RESTRICT_AND_REDISTRIBUTE=PASS"
+              echo "A03_PENDING_FINAL=$(pending_amount "$HOLDER")"
+              echo "A03_RESULT=MEASURED"
+
+            else
+              echo "A03_RESULT=INCONCLUSIVE"
+            fi
+
+          else
+            echo "A03_RESULT=INCONCLUSIVE"
+          fi
+
           rev "$S"
 
           echo "=== A04 cooldown -> duration 0 -> unstake ==="
-          S="$(snap)"; V0="$(vault_assets)"; Z0="$(silo_assets)"; E0="$(economic_assets "$V0" "$Z0")"; BEFORE_R="$(usde_bal "$RECEIVER")"
-          if tx "$HOLDER" "$SUSDE" "cooldownShares(uint256)" "1000000000000000000" && tx "$ADMIN" "$SUSDE" "setCooldownDuration(uint24)" "0"; then
-            echo "A04_COOLDOWN_AND_DISABLE=PASS"; rpc evm_increaseTime 86401 >/dev/null; rpc evm_mine >/dev/null
-            if tx "$HOLDER" "$SUSDE" "unstake(address)" "$RECEIVER"; then
-              AFTER_R="$(usde_bal "$RECEIVER")"; V4="$(vault_assets)"; Z4="$(silo_assets)"; E4="$(economic_assets "$V4" "$Z4")"
-              echo "A04_RECEIVER_DELTA=$(python3 - "$BEFORE_R" "$AFTER_R" <<'PY' import sys print(int(sys.argv[2])-int(sys.argv[1])) PY )"; check_conservation "A04_ECONOMIC_CONSERVATION" "$E0" "$E4"; echo "A04_RESULT=MEASURED"
-            else echo "A04_RESULT=BLOCKED"; fi
-          else echo "A04_RESULT=INCONCLUSIVE"; fi
+
+          S="$(snap)"
+          V0="$(vault_assets)"
+          Z0="$(silo_assets)"
+          E0="$(economic_assets "$V0" "$Z0")"
+          BEFORE_R="$(usde_bal "$RECEIVER")"
+
+          if \
+            tx \
+              "$HOLDER" \
+              "$SUSDE" \
+              "cooldownShares(uint256)" \
+              "1000000000000000000" &&
+            tx \
+              "$ADMIN" \
+              "$SUSDE" \
+              "setCooldownDuration(uint24)" \
+              "0"
+          then
+
+            echo "A04_COOLDOWN_AND_DISABLE=PASS"
+
+            rpc evm_increaseTime 86401 >/dev/null
+            rpc evm_mine >/dev/null
+
+            if \
+              tx \
+                "$HOLDER" \
+                "$SUSDE" \
+                "unstake(address)" \
+                "$RECEIVER"
+            then
+
+              AFTER_R="$(usde_bal "$RECEIVER")"
+              V4="$(vault_assets)"
+              Z4="$(silo_assets)"
+              E4="$(economic_assets "$V4" "$Z4")"
+
+              echo "A04_RECEIVER_DELTA=$(delta "$BEFORE_R" "$AFTER_R")"
+
+              check_conservation \
+                "A04_ECONOMIC_CONSERVATION" \
+                "$E0" \
+                "$E4"
+
+              echo "A04_RESULT=MEASURED"
+
+            else
+              echo "A04_RESULT=BLOCKED"
+            fi
+
+          else
+            echo "A04_RESULT=INCONCLUSIVE"
+          fi
+
           rev "$S"
 
           echo "=== FINAL ==="
@@ -136,5 +427,9 @@ jobs:
         if: always()
         run: |
           set +e
-          if [ -f anvil.pid ]; then kill "$(cat anvil.pid)" 2>/dev/null || true; fi
+
+          if [ -f anvil.pid ]; then
+            kill "$(cat anvil.pid)" 2>/dev/null || true
+          fi
+
           echo "LOCAL_FORK_STOPPED=YES"
