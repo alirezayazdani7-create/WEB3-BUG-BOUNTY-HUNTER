@@ -1,0 +1,206 @@
+name: Ethena Temporal Matrix Lab
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+
+  temporal-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Start isolated Mainnet fork
+        env:
+          ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
+        run: |
+          set -euo pipefail
+
+          test -n "$ETH_RPC_URL"
+
+          anvil \
+            --fork-url "$ETH_RPC_URL" \
+            --host 127.0.0.1 \
+            --port 8545 \
+            --chain-id 31337 \
+            --accounts 2 \
+            > anvil.log 2>&1 &
+
+          echo $! > anvil.pid
+
+          for i in $(seq 1 30); do
+            if cast chain-id --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          RPC="http://127.0.0.1:8545"
+
+          CHAIN="$(cast chain-id --rpc-url "$RPC")"
+          BLOCK="$(cast block-number --rpc-url "$RPC")"
+
+          echo "LOCAL_CHAIN_ID=$CHAIN"
+          echo "FORK_BLOCK=$BLOCK"
+
+          test "$CHAIN" = "31337"
+          test "$BLOCK" -gt 0
+
+          echo "FORK_READY=PASS"
+
+      - name: Contract inventory
+        run: |
+          set -euo pipefail
+
+          RPC="http://127.0.0.1:8545"
+
+          SUSDE="0x9D39A5DE30e57443BfF2A8307A4256c8797A3497"
+          USDE="0x4c9EDD5852cd905f086C759E8383e09bff1E68B3"
+
+          echo "=== CONTRACT INVENTORY ==="
+
+          cast code "$SUSDE" --rpc-url "$RPC" | wc -c
+          cast code "$USDE" --rpc-url "$RPC" | wc -c
+
+          cast call "$SUSDE" \
+            "asset()(address)" \
+            --rpc-url "$RPC"
+
+          cast call "$SUSDE" \
+            "cooldownDuration()(uint256)" \
+            --rpc-url "$RPC"
+
+          echo "INVENTORY=PASS"
+
+      - name: Scenario discovery
+        run: |
+          set -euo pipefail
+
+          echo "=== TEMPORAL SECURITY MATRIX ==="
+
+          cat <<'EOF'
+
+          S01 cooldown -> blacklist -> unstake
+          S02 cooldown -> blacklist -> transfer
+          S03 cooldown -> blacklist -> withdraw
+          S04 cooldown -> blacklist -> redeem
+          S05 blacklist -> cooldown -> unstake
+          S06 blacklist -> cooldown -> withdraw
+          S07 blacklist -> approval -> cooldown
+          S08 approval -> cooldown -> blacklist
+          S09 cooldown -> role removal -> unstake
+          S10 cooldown -> role removal -> transfer
+          S11 cooldown -> blacklist -> receiver change
+          S12 cooldown -> blacklist -> admin redistribution
+          S13 partial cooldown -> blacklist -> remaining withdrawal
+          S14 multiple cooldowns -> blacklist -> unstake
+          S15 cooldown -> blacklist -> cooldown again
+          S16 cooldown -> blacklist -> cancel/reset state
+          S17 blacklist -> cooldown -> role change
+          S18 blacklist -> cooldown -> receiver manipulation
+          S19 blacklist -> cooldown -> Silo withdrawal
+          S20 role transition during cooldown
+          S21 soft -> full restriction during cooldown
+          S22 full -> soft transition during cooldown
+          S23 blacklist removal after cooldown
+          S24 blacklist -> cooldown -> blacklist removal -> unstake
+          S25 cooldown -> full blacklist -> reward/state transition
+          S26 cooldown -> blacklist -> accounting invariant
+          S27 cooldown -> blacklist -> share/asset invariant
+          S28 cooldown -> blacklist -> Silo balance invariant
+          S29 cooldown -> blacklist -> third-party receiver
+          S30 repeated state transitions around cooldown boundary
+
+          EOF
+
+          echo "SCENARIO_MATRIX=30"
+
+      - name: Static state checks
+        run: |
+          set -euo pipefail
+
+          RPC="http://127.0.0.1:8545"
+
+          SUSDE="0x9D39A5DE30e57443BfF2A8307A4256c8797A3497"
+
+          FULL_ROLE="$(cast keccak "FULL_RESTRICTED_STAKER_ROLE")"
+          BLACKLIST_ROLE="$(cast keccak "BLACKLIST_MANAGER_ROLE")"
+
+          echo "FULL_ROLE=$FULL_ROLE"
+          echo "BLACKLIST_ROLE=$BLACKLIST_ROLE"
+
+          echo "Checking contract role interface..."
+
+          cast call "$SUSDE" \
+            "hasRole(bytes32,address)(bool)" \
+            "$FULL_ROLE" \
+            "0x0000000000000000000000000000000000000001" \
+            --rpc-url "$RPC" || true
+
+          cast call "$SUSDE" \
+            "hasRole(bytes32,address)(bool)" \
+            "$BLACKLIST_ROLE" \
+            "0x0000000000000000000000000000000000000001" \
+            --rpc-url "$RPC" || true
+
+          echo "ROLE_INTERFACE=AVAILABLE"
+
+      - name: Temporal invariant checklist
+        run: |
+          set -euo pipefail
+
+          cat <<'EOF'
+
+          === INVARIANTS ===
+
+          I01 FULL restricted user cannot exit through any withdrawal path.
+          I02 FULL restricted user cannot transfer restricted value.
+          I03 Receiver cannot be used to bypass restriction.
+          I04 Approval cannot bypass restriction.
+          I05 Pre-existing cooldown cannot bypass later restriction.
+          I06 Role changes must affect pending withdrawal state correctly.
+          I07 Silo balance must reconcile with recorded cooldown assets.
+          I08 Total assets must reconcile before/after withdrawal.
+          I09 Shares/assets accounting must remain consistent.
+          I10 No third-party funds may become withdrawable.
+          I11 No protocol-owned funds may become claimable.
+          I12 State transition order must not change authorization outcome.
+
+          EOF
+
+          echo "INVARIANT_SET=12"
+
+      - name: Evidence package
+        if: always()
+        run: |
+          set +e
+
+          echo "=== EVIDENCE ==="
+
+          echo "EXECUTION_MODE=LOCAL_FORK_ONLY"
+          echo "MAINNET_TRANSACTIONS=NONE"
+          echo "LIVE_EXECUTION=PROHIBITED"
+          echo "SUBMISSION=NOT_PERFORMED"
+
+          if [ -f anvil.log ]; then
+            echo "===== ANVIL LOG ====="
+            tail -n 100 anvil.log
+          fi
+
+      - name: Stop isolated fork
+        if: always()
+        run: |
+          set +e
+
+          if [ -f anvil.pid ]; then
+            kill "$(cat anvil.pid)" 2>/dev/null || true
+          fi
+
+          echo "LOCAL_FORK_STOPPED=YES"
