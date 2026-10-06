@@ -9,7 +9,7 @@ permissions:
 jobs:
   state-transition:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
 
     steps:
       - name: Install Foundry
@@ -55,6 +55,7 @@ jobs:
           echo "LOCAL_FORK=PASS"
 
       - name: Execute state-transition variants
+        timeout-minutes: 8
         run: |
           set -u
 
@@ -65,6 +66,9 @@ jobs:
 
           HOLDER="0xA469b399df1c7b4bd8569048d889f131329dffa1"
           RECEIVER="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+
+          # Previously verified on the Ethena fork
+          BLACKLIST_MANAGER="0x3B0AAf6e6fCd4a7cEEf8c92C32DFeA9E64dC1862"
 
           FULL_ROLE="$(cast keccak "FULL_RESTRICTED_STAKER_ROLE")"
           BLACKLIST_ROLE="$(cast keccak "BLACKLIST_MANAGER_ROLE")"
@@ -80,6 +84,7 @@ jobs:
           echo "FULL_ROLE=$FULL_ROLE"
           echo "BLACKLIST_ROLE=$BLACKLIST_ROLE"
           echo "ADMIN=$ADMIN"
+          echo "BLACKLIST_MANAGER=$BLACKLIST_MANAGER"
 
           rpc() {
             cast rpc "$@" --rpc-url "$RPC"
@@ -87,7 +92,6 @@ jobs:
 
           impersonate() {
             rpc anvil_impersonateAccount "$1" >/dev/null
-
             rpc anvil_setBalance \
               "$1" \
               0x3635C9ADC5DEA0000000000 \
@@ -124,7 +128,7 @@ jobs:
               fi
             done
 
-            cast send \
+            timeout 60s cast send \
               --unlocked \
               --from "$from" \
               "$to" \
@@ -170,11 +174,12 @@ jobs:
           }
 
           echo "========================================"
-          echo "ETHENA STATE TRANSITION LAB"
+          echo "ETHENA STATE TRANSITION LAB V2"
           echo "========================================"
 
           impersonate "$HOLDER"
           impersonate "$ADMIN"
+          impersonate "$BLACKLIST_MANAGER"
           impersonate "$RECEIVER"
 
           ADMIN_ROLE_OK="$(
@@ -191,29 +196,34 @@ jobs:
               "$SUSDE" \
               "hasRole(bytes32,address)(bool)" \
               "$BLACKLIST_ROLE" \
-              "$ADMIN" \
+              "$BLACKLIST_MANAGER" \
               --rpc-url "$RPC"
           )"
 
           echo "ADMIN_ROLE_OK=$ADMIN_ROLE_OK"
           echo "BLACKLIST_MANAGER_OK=$MANAGER_ROLE_OK"
 
+          if [ "$ADMIN_ROLE_OK" != "true" ]; then
+            echo "RESULT=INCONCLUSIVE"
+            echo "DETAIL=DEFAULT_ADMIN_ROLE verification failed"
+            exit 0
+          fi
+
+          if [ "$MANAGER_ROLE_OK" != "true" ]; then
+            echo "RESULT=INCONCLUSIVE"
+            echo "DETAIL=BLACKLIST_MANAGER_ROLE verification failed"
+            exit 0
+          fi
+
           #
           # R01
           #
-          # Partial cooldown
-          # -> FULL restriction
-          # -> admin redistributeLockedAmount
-          # -> pending silo claim
-          # -> unstake
-          #
 
           echo ""
-          echo "=== R01 partial cooldown -> FULL -> redistribute -> unstake ==="
+          echo "=== R01 cooldown -> FULL -> redistribute -> unstake ==="
 
           SNAP="$(snapshot)"
 
-          BEFORE_HOLDER_SHARES="$(balance "$HOLDER")"
           BEFORE_RECEIVER_USDE="$(usde_balance "$RECEIVER")"
 
           if send_tx \
@@ -223,17 +233,11 @@ jobs:
             "1000000000000000000"; then
 
             echo "R01_COOLDOWN=PASS"
-
             echo "R01_COOLDOWN_END=$(cooldown_end)"
             echo "R01_PENDING_USDE=$(cooldown_amount)"
 
-            AFTER_COOLDOWN_SHARES="$(balance "$HOLDER")"
-
-            echo "R01_HOLDER_SHARES_BEFORE=$BEFORE_HOLDER_SHARES"
-            echo "R01_HOLDER_SHARES_AFTER_COOLDOWN=$AFTER_COOLDOWN_SHARES"
-
             if send_tx \
-              "$ADMIN" \
+              "$BLACKLIST_MANAGER" \
               "$SUSDE" \
               "addToBlacklist(address,bool)" \
               "$HOLDER" \
@@ -250,13 +254,9 @@ jobs:
 
                 echo "R01_REDISTRIBUTE=PASS"
 
-                AFTER_REDIST_SHARES="$(balance "$HOLDER")"
-                RECEIVER_SHARES="$(balance "$RECEIVER")"
-                PENDING_AFTER_REDIST="$(cooldown_amount)"
-
-                echo "R01_HOLDER_SHARES_AFTER_REDISTRIBUTE=$AFTER_REDIST_SHARES"
-                echo "R01_RECEIVER_SHARES_AFTER_REDISTRIBUTE=$RECEIVER_SHARES"
-                echo "R01_PENDING_USDE_AFTER_REDISTRIBUTE=$PENDING_AFTER_REDIST"
+                echo "R01_HOLDER_SHARES_AFTER_REDISTRIBUTE=$(balance "$HOLDER")"
+                echo "R01_RECEIVER_SHARES_AFTER_REDISTRIBUTE=$(balance "$RECEIVER")"
+                echo "R01_PENDING_AFTER_REDISTRIBUTE=$(cooldown_amount)"
 
                 advance_cooldown
 
@@ -272,24 +272,20 @@ jobs:
                   echo "R01_RECEIVER_USDE_AFTER=$AFTER_RECEIVER_USDE"
 
                   if [ "$AFTER_RECEIVER_USDE" != "$BEFORE_RECEIVER_USDE" ]; then
-
                     echo "SCENARIO=R01"
                     echo "RESULT=BYPASS"
-                    echo "DETAIL=Admin redistribution removed the remaining sUSDe share balance, but the pre-existing siloed cooldown claim remained withdrawable after FULL restriction"
-
+                    echo "DETAIL=Pre-existing cooldown remained withdrawable after FULL restriction and redistribution"
                   else
-
                     echo "SCENARIO=R01"
                     echo "RESULT=INCONCLUSIVE"
                     echo "unstake succeeded but receiver USDe balance did not change"
-
                   fi
 
                 else
 
                   echo "SCENARIO=R01"
                   echo "RESULT=BLOCKED"
-                  echo "unstake reverted after FULL restriction and admin redistribution"
+                  echo "unstake reverted after FULL restriction and redistribution"
 
                 fi
 
@@ -305,7 +301,7 @@ jobs:
 
               echo "SCENARIO=R01"
               echo "RESULT=INCONCLUSIVE"
-              echo "FULL restriction setup failed"
+              echo "FULL restriction failed"
 
             fi
 
@@ -313,7 +309,7 @@ jobs:
 
             echo "SCENARIO=R01"
             echo "RESULT=INCONCLUSIVE"
-            echo "Initial partial cooldown failed"
+            echo "Initial cooldown failed"
 
           fi
 
@@ -322,9 +318,6 @@ jobs:
           #
           # R02
           #
-          # Baseline:
-          # FULL restriction BEFORE cooldown must remain blocked.
-          #
 
           echo ""
           echo "=== R02 FULL -> cooldown baseline ==="
@@ -332,7 +325,7 @@ jobs:
           SNAP="$(snapshot)"
 
           if send_tx \
-            "$ADMIN" \
+            "$BLACKLIST_MANAGER" \
             "$SUSDE" \
             "addToBlacklist(address,bool)" \
             "$HOLDER" \
@@ -369,13 +362,9 @@ jobs:
           #
           # R03
           #
-          # Isolate the state split:
-          # share balance goes to zero,
-          # but cooldown underlyingAmount remains non-zero.
-          #
 
           echo ""
-          echo "=== R03 cooldown -> FULL -> redistribute -> pending silo claim ==="
+          echo "=== R03 cooldown -> FULL -> redistribute -> pending claim ==="
 
           SNAP="$(snapshot)"
 
@@ -388,7 +377,7 @@ jobs:
             PRE_AMOUNT="$(cooldown_amount)"
 
             if send_tx \
-              "$ADMIN" \
+              "$BLACKLIST_MANAGER" \
               "$SUSDE" \
               "addToBlacklist(address,bool)" \
               "$HOLDER" \
@@ -409,16 +398,12 @@ jobs:
                 echo "R03_HOLDER_SHARES=$HOLDER_SHARES"
 
                 if [ "$HOLDER_SHARES" = "0" ] && [ "$POST_AMOUNT" -gt 0 ]; then
-
                   echo "SCENARIO=R03"
                   echo "RESULT=BYPASS"
-                  echo "DETAIL=Share state was fully remediated while a non-zero cooldown claim remained"
-
+                  echo "DETAIL=Share balance was removed while cooldown claim remained"
                 else
-
                   echo "SCENARIO=R03"
                   echo "RESULT=NO_BYPASS"
-
                 fi
 
               else
