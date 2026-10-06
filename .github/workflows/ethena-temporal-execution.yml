@@ -83,7 +83,10 @@ jobs:
 
           impersonate() {
             rpc anvil_impersonateAccount "$1" >/dev/null
-            rpc anvil_setBalance "$1" 0x3635C9ADC5DEA0000000000 >/dev/null
+            rpc anvil_setBalance \
+              "$1" \
+              0x3635C9ADC5DEA0000000000 \
+              >/dev/null
           }
 
           snapshot() {
@@ -99,14 +102,41 @@ jobs:
             rpc evm_mine >/dev/null
           }
 
+          #
+          # FIXED TX WRAPPER
+          #
+          # Previous version always passed a fifth argument.
+          # That caused calls such as:
+          #
+          # cooldownShares(uint256)
+          # unstake(address)
+          #
+          # to receive an empty argument.
+          #
+          # This version removes empty arguments before invoking cast.
+          #
+
           send_tx() {
+            local from="$1"
+            local to="$2"
+            local sig="$3"
+
+            shift 3
+
+            local args=()
+
+            for arg in "$@"; do
+              if [ -n "$arg" ]; then
+                args+=("$arg")
+              fi
+            done
+
             cast send \
               --unlocked \
-              --from "$1" \
-              "$2" \
-              "$3" \
-              "$4" \
-              "$5" \
+              --from "$from" \
+              "$to" \
+              "$sig" \
+              "${args[@]}" \
               --rpc-url "$RPC" \
               >/tmp/cast.out 2>/tmp/cast.err
           }
@@ -150,6 +180,12 @@ jobs:
             exit 0
           fi
 
+
+          #
+          # S01
+          # cooldown -> blacklist -> unstake
+          #
+
           echo ""
           echo "=== S01 cooldown -> blacklist -> unstake ==="
 
@@ -160,8 +196,9 @@ jobs:
             "$HOLDER" \
             "$SUSDE" \
             "cooldownShares(uint256)" \
-            "1000000000000000000" \
-            ""; then
+            "1000000000000000000"; then
+
+            echo "S01_COOLDOWN=PASS"
 
             if send_tx \
               "$MANAGER" \
@@ -170,57 +207,78 @@ jobs:
               "$HOLDER" \
               "true"; then
 
+              echo "S01_BLACKLIST=PASS"
+
               advance_cooldown
 
               if send_tx \
                 "$HOLDER" \
                 "$SUSDE" \
                 "unstake(address)" \
-                "$RECEIVER" \
-                ""; then
+                "$RECEIVER"; then
 
                 AFTER="$(usde_balance)"
 
                 if [ "$AFTER" != "$BEFORE" ]; then
+
                   report \
                     "S01" \
                     "BYPASS" \
                     "Pre-existing cooldown survived FULL restriction and receiver balance changed"
+
                   BYPASS_COUNT=$((BYPASS_COUNT + 1))
+
                 else
+
                   report \
                     "S01" \
                     "INCONCLUSIVE" \
                     "unstake succeeded but receiver balance did not change"
+
                   INCONCLUSIVE_COUNT=$((INCONCLUSIVE_COUNT + 1))
+
                 fi
 
               else
+
                 report \
                   "S01" \
                   "BLOCKED" \
                   "unstake reverted after FULL restriction"
+
                 BLOCKED_COUNT=$((BLOCKED_COUNT + 1))
+
               fi
 
             else
+
               report \
                 "S01" \
                 "INCONCLUSIVE" \
                 "Blacklist setup failed"
+
               INCONCLUSIVE_COUNT=$((INCONCLUSIVE_COUNT + 1))
+
             fi
 
           else
+
             report \
               "S01" \
               "INCONCLUSIVE" \
               "Initial cooldown setup failed"
+
             INCONCLUSIVE_COUNT=$((INCONCLUSIVE_COUNT + 1))
+
           fi
 
           revert_snapshot "$SNAP"
 
+
+          #
+          # S05
+          # blacklist -> cooldown
+          #
 
           echo ""
           echo "=== S05 blacklist -> cooldown ==="
@@ -238,8 +296,7 @@ jobs:
               "$HOLDER" \
               "$SUSDE" \
               "cooldownShares(uint256)" \
-              "1000000000000000000" \
-              ""; then
+              "1000000000000000000"; then
 
               report \
                 "S05" \
@@ -273,6 +330,11 @@ jobs:
           revert_snapshot "$SNAP"
 
 
+          #
+          # S07
+          # blacklist -> approval -> cooldown
+          #
+
           echo ""
           echo "=== S07 blacklist -> approval -> cooldown ==="
 
@@ -296,8 +358,7 @@ jobs:
                 "$HOLDER" \
                 "$SUSDE" \
                 "cooldownShares(uint256)" \
-                "1000000000000000000" \
-                ""; then
+                "1000000000000000000"; then
 
                 report \
                   "S07" \
@@ -342,6 +403,11 @@ jobs:
           revert_snapshot "$SNAP"
 
 
+          #
+          # S08
+          # approval -> cooldown -> blacklist -> unstake
+          #
+
           echo ""
           echo "=== S08 approval -> cooldown -> blacklist -> unstake ==="
 
@@ -358,8 +424,7 @@ jobs:
               "$HOLDER" \
               "$SUSDE" \
               "cooldownShares(uint256)" \
-              "1000000000000000000" \
-              ""; then
+              "1000000000000000000"; then
 
               if send_tx \
                 "$MANAGER" \
@@ -376,8 +441,7 @@ jobs:
                   "$HOLDER" \
                   "$SUSDE" \
                   "unstake(address)" \
-                  "$RECEIVER" \
-                  ""; then
+                  "$RECEIVER"; then
 
                   AFTER="$(usde_balance)"
 
@@ -448,6 +512,11 @@ jobs:
           revert_snapshot "$SNAP"
 
 
+          #
+          # S21
+          # cooldown -> FULL restriction -> unstake
+          #
+
           echo ""
           echo "=== S21 cooldown -> FULL restriction -> unstake ==="
 
@@ -457,8 +526,9 @@ jobs:
             "$HOLDER" \
             "$SUSDE" \
             "cooldownShares(uint256)" \
-            "1000000000000000000" \
-            ""; then
+            "1000000000000000000"; then
+
+            echo "S21_COOLDOWN=PASS"
 
             if send_tx \
               "$MANAGER" \
@@ -466,6 +536,8 @@ jobs:
               "addToBlacklist(address,bool)" \
               "$HOLDER" \
               "true"; then
+
+              echo "S21_FULL_RESTRICTION=PASS"
 
               advance_cooldown
 
@@ -475,8 +547,7 @@ jobs:
                 "$HOLDER" \
                 "$SUSDE" \
                 "unstake(address)" \
-                "$RECEIVER" \
-                ""; then
+                "$RECEIVER"; then
 
                 AFTER="$(usde_balance)"
 
@@ -536,6 +607,10 @@ jobs:
           revert_snapshot "$SNAP"
 
 
+          #
+          # FINAL
+          #
+
           echo ""
           echo "========================================"
           echo "FINAL MATRIX RESULT"
@@ -551,11 +626,17 @@ jobs:
           echo "SUBMISSION=NOT_PERFORMED"
 
           if [ "$INCONCLUSIVE_COUNT" -gt 0 ]; then
+
             echo "MATRIX_STATUS=PARTIAL"
+
           elif [ "$BYPASS_COUNT" -gt 0 ]; then
+
             echo "MATRIX_STATUS=BYPASS_DETECTED"
+
           else
+
             echo "MATRIX_STATUS=NO_BYPASS_IN_TESTED_SCENARIOS"
+
           fi
 
       - name: Stop isolated fork
