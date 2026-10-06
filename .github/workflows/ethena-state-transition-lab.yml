@@ -1,0 +1,469 @@
+name: Ethena State Transition Lab
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  state-transition:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Start isolated Mainnet fork
+        env:
+          ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
+        run: |
+          set -euo pipefail
+
+          test -n "$ETH_RPC_URL"
+
+          anvil \
+            --fork-url "$ETH_RPC_URL" \
+            --host 127.0.0.1 \
+            --port 8545 \
+            --chain-id 31337 \
+            --accounts 2 \
+            > anvil.log 2>&1 &
+
+          echo $! > anvil.pid
+
+          RPC="http://127.0.0.1:8545"
+
+          for i in $(seq 1 30); do
+            cast chain-id --rpc-url "$RPC" >/dev/null 2>&1 && break
+            sleep 1
+          done
+
+          LOCAL_CHAIN="$(cast chain-id --rpc-url "$RPC")"
+          SOURCE_CHAIN="$(cast chain-id --rpc-url "$ETH_RPC_URL")"
+          FORK_BLOCK="$(cast block-number --rpc-url "$RPC")"
+
+          echo "LOCAL_CHAIN=$LOCAL_CHAIN"
+          echo "SOURCE_CHAIN=$SOURCE_CHAIN"
+          echo "FORK_BLOCK=$FORK_BLOCK"
+
+          test "$LOCAL_CHAIN" = "31337"
+          test "$SOURCE_CHAIN" = "1"
+          test "$FORK_BLOCK" -gt 0
+
+          echo "LOCAL_FORK=PASS"
+
+      - name: Execute state-transition variants
+        run: |
+          set -u
+
+          RPC="http://127.0.0.1:8545"
+
+          SUSDE="0x9D39A5DE30e57443BfF2A8307A4256c8797A3497"
+          USDE="0x4c9EDD5852cd905f086C759E8383e09bff1E68B3"
+
+          HOLDER="0xA469b399df1c7b4bd8569048d889f131329dffa1"
+          RECEIVER="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+
+          FULL_ROLE="$(cast keccak "FULL_RESTRICTED_STAKER_ROLE")"
+          BLACKLIST_ROLE="$(cast keccak "BLACKLIST_MANAGER_ROLE")"
+
+          ADMIN="$(
+            cast call \
+              "$SUSDE" \
+              "owner()(address)" \
+              --rpc-url "$RPC" |
+              tr '[:upper:]' '[:lower:]'
+          )"
+
+          echo "FULL_ROLE=$FULL_ROLE"
+          echo "BLACKLIST_ROLE=$BLACKLIST_ROLE"
+          echo "ADMIN=$ADMIN"
+
+          rpc() {
+            cast rpc "$@" --rpc-url "$RPC"
+          }
+
+          impersonate() {
+            rpc anvil_impersonateAccount "$1" >/dev/null
+
+            rpc anvil_setBalance \
+              "$1" \
+              0x3635C9ADC5DEA0000000000 \
+              >/dev/null
+          }
+
+          snapshot() {
+            rpc evm_snapshot |
+              tr -d '"' |
+              tail -n 1
+          }
+
+          revert_snapshot() {
+            rpc evm_revert "$1" >/dev/null
+          }
+
+          advance_cooldown() {
+            rpc evm_increaseTime 86401 >/dev/null
+            rpc evm_mine >/dev/null
+          }
+
+          send_tx() {
+            local from="$1"
+            local to="$2"
+            local sig="$3"
+
+            shift 3
+
+            local args=()
+
+            for arg in "$@"; do
+              if [ -n "$arg" ]; then
+                args+=("$arg")
+              fi
+            done
+
+            cast send \
+              --unlocked \
+              --from "$from" \
+              "$to" \
+              "$sig" \
+              "${args[@]}" \
+              --rpc-url "$RPC" \
+              >/tmp/cast.out \
+              2>/tmp/cast.err
+          }
+
+          cooldown_end() {
+            cast call \
+              "$SUSDE" \
+              "cooldowns(address)(uint104,uint152)" \
+              "$HOLDER" \
+              --rpc-url "$RPC" |
+              awk 'NR==1 {print $1}'
+          }
+
+          cooldown_amount() {
+            cast call \
+              "$SUSDE" \
+              "cooldowns(address)(uint104,uint152)" \
+              "$HOLDER" \
+              --rpc-url "$RPC" |
+              awk 'NR==2 {print $1}'
+          }
+
+          balance() {
+            cast call \
+              "$SUSDE" \
+              "balanceOf(address)(uint256)" \
+              "$1" \
+              --rpc-url "$RPC"
+          }
+
+          usde_balance() {
+            cast call \
+              "$USDE" \
+              "balanceOf(address)(uint256)" \
+              "$1" \
+              --rpc-url "$RPC"
+          }
+
+          echo "========================================"
+          echo "ETHENA STATE TRANSITION LAB"
+          echo "========================================"
+
+          impersonate "$HOLDER"
+          impersonate "$ADMIN"
+          impersonate "$RECEIVER"
+
+          ADMIN_ROLE_OK="$(
+            cast call \
+              "$SUSDE" \
+              "hasRole(bytes32,address)(bool)" \
+              "$(cast call "$SUSDE" "DEFAULT_ADMIN_ROLE()(bytes32)" --rpc-url "$RPC")" \
+              "$ADMIN" \
+              --rpc-url "$RPC"
+          )"
+
+          MANAGER_ROLE_OK="$(
+            cast call \
+              "$SUSDE" \
+              "hasRole(bytes32,address)(bool)" \
+              "$BLACKLIST_ROLE" \
+              "$ADMIN" \
+              --rpc-url "$RPC"
+          )"
+
+          echo "ADMIN_ROLE_OK=$ADMIN_ROLE_OK"
+          echo "BLACKLIST_MANAGER_OK=$MANAGER_ROLE_OK"
+
+          #
+          # R01
+          #
+          # Partial cooldown
+          # -> FULL restriction
+          # -> admin redistributeLockedAmount
+          # -> pending silo claim
+          # -> unstake
+          #
+
+          echo ""
+          echo "=== R01 partial cooldown -> FULL -> redistribute -> unstake ==="
+
+          SNAP="$(snapshot)"
+
+          BEFORE_HOLDER_SHARES="$(balance "$HOLDER")"
+          BEFORE_RECEIVER_USDE="$(usde_balance "$RECEIVER")"
+
+          if send_tx \
+            "$HOLDER" \
+            "$SUSDE" \
+            "cooldownShares(uint256)" \
+            "1000000000000000000"; then
+
+            echo "R01_COOLDOWN=PASS"
+
+            echo "R01_COOLDOWN_END=$(cooldown_end)"
+            echo "R01_PENDING_USDE=$(cooldown_amount)"
+
+            AFTER_COOLDOWN_SHARES="$(balance "$HOLDER")"
+
+            echo "R01_HOLDER_SHARES_BEFORE=$BEFORE_HOLDER_SHARES"
+            echo "R01_HOLDER_SHARES_AFTER_COOLDOWN=$AFTER_COOLDOWN_SHARES"
+
+            if send_tx \
+              "$ADMIN" \
+              "$SUSDE" \
+              "addToBlacklist(address,bool)" \
+              "$HOLDER" \
+              "true"; then
+
+              echo "R01_FULL_RESTRICTION=PASS"
+
+              if send_tx \
+                "$ADMIN" \
+                "$SUSDE" \
+                "redistributeLockedAmount(address,address)" \
+                "$HOLDER" \
+                "$RECEIVER"; then
+
+                echo "R01_REDISTRIBUTE=PASS"
+
+                AFTER_REDIST_SHARES="$(balance "$HOLDER")"
+                RECEIVER_SHARES="$(balance "$RECEIVER")"
+                PENDING_AFTER_REDIST="$(cooldown_amount)"
+
+                echo "R01_HOLDER_SHARES_AFTER_REDISTRIBUTE=$AFTER_REDIST_SHARES"
+                echo "R01_RECEIVER_SHARES_AFTER_REDISTRIBUTE=$RECEIVER_SHARES"
+                echo "R01_PENDING_USDE_AFTER_REDISTRIBUTE=$PENDING_AFTER_REDIST"
+
+                advance_cooldown
+
+                if send_tx \
+                  "$HOLDER" \
+                  "$SUSDE" \
+                  "unstake(address)" \
+                  "$RECEIVER"; then
+
+                  AFTER_RECEIVER_USDE="$(usde_balance "$RECEIVER")"
+
+                  echo "R01_RECEIVER_USDE_BEFORE=$BEFORE_RECEIVER_USDE"
+                  echo "R01_RECEIVER_USDE_AFTER=$AFTER_RECEIVER_USDE"
+
+                  if [ "$AFTER_RECEIVER_USDE" != "$BEFORE_RECEIVER_USDE" ]; then
+
+                    echo "SCENARIO=R01"
+                    echo "RESULT=BYPASS"
+                    echo "DETAIL=Admin redistribution removed the remaining sUSDe share balance, but the pre-existing siloed cooldown claim remained withdrawable after FULL restriction"
+
+                  else
+
+                    echo "SCENARIO=R01"
+                    echo "RESULT=INCONCLUSIVE"
+                    echo "unstake succeeded but receiver USDe balance did not change"
+
+                  fi
+
+                else
+
+                  echo "SCENARIO=R01"
+                  echo "RESULT=BLOCKED"
+                  echo "unstake reverted after FULL restriction and admin redistribution"
+
+                fi
+
+              else
+
+                echo "SCENARIO=R01"
+                echo "RESULT=INCONCLUSIVE"
+                echo "redistributeLockedAmount failed"
+
+              fi
+
+            else
+
+              echo "SCENARIO=R01"
+              echo "RESULT=INCONCLUSIVE"
+              echo "FULL restriction setup failed"
+
+            fi
+
+          else
+
+            echo "SCENARIO=R01"
+            echo "RESULT=INCONCLUSIVE"
+            echo "Initial partial cooldown failed"
+
+          fi
+
+          revert_snapshot "$SNAP"
+
+          #
+          # R02
+          #
+          # Baseline:
+          # FULL restriction BEFORE cooldown must remain blocked.
+          #
+
+          echo ""
+          echo "=== R02 FULL -> cooldown baseline ==="
+
+          SNAP="$(snapshot)"
+
+          if send_tx \
+            "$ADMIN" \
+            "$SUSDE" \
+            "addToBlacklist(address,bool)" \
+            "$HOLDER" \
+            "true"; then
+
+            if send_tx \
+              "$HOLDER" \
+              "$SUSDE" \
+              "cooldownShares(uint256)" \
+              "1000000000000000000"; then
+
+              echo "SCENARIO=R02"
+              echo "RESULT=BYPASS"
+              echo "cooldownShares succeeded while FULL restricted"
+
+            else
+
+              echo "SCENARIO=R02"
+              echo "RESULT=BLOCKED"
+              echo "cooldownShares reverted while FULL restricted"
+
+            fi
+
+          else
+
+            echo "SCENARIO=R02"
+            echo "RESULT=INCONCLUSIVE"
+            echo "FULL restriction setup failed"
+
+          fi
+
+          revert_snapshot "$SNAP"
+
+          #
+          # R03
+          #
+          # Isolate the state split:
+          # share balance goes to zero,
+          # but cooldown underlyingAmount remains non-zero.
+          #
+
+          echo ""
+          echo "=== R03 cooldown -> FULL -> redistribute -> pending silo claim ==="
+
+          SNAP="$(snapshot)"
+
+          if send_tx \
+            "$HOLDER" \
+            "$SUSDE" \
+            "cooldownShares(uint256)" \
+            "1000000000000000000"; then
+
+            PRE_AMOUNT="$(cooldown_amount)"
+
+            if send_tx \
+              "$ADMIN" \
+              "$SUSDE" \
+              "addToBlacklist(address,bool)" \
+              "$HOLDER" \
+              "true"; then
+
+              if send_tx \
+                "$ADMIN" \
+                "$SUSDE" \
+                "redistributeLockedAmount(address,address)" \
+                "$HOLDER" \
+                "$RECEIVER"; then
+
+                POST_AMOUNT="$(cooldown_amount)"
+                HOLDER_SHARES="$(balance "$HOLDER")"
+
+                echo "R03_PENDING_BEFORE=$PRE_AMOUNT"
+                echo "R03_PENDING_AFTER=$POST_AMOUNT"
+                echo "R03_HOLDER_SHARES=$HOLDER_SHARES"
+
+                if [ "$HOLDER_SHARES" = "0" ] && [ "$POST_AMOUNT" -gt 0 ]; then
+
+                  echo "SCENARIO=R03"
+                  echo "RESULT=BYPASS"
+                  echo "DETAIL=Share state was fully remediated while a non-zero cooldown claim remained"
+
+                else
+
+                  echo "SCENARIO=R03"
+                  echo "RESULT=NO_BYPASS"
+
+                fi
+
+              else
+
+                echo "SCENARIO=R03"
+                echo "RESULT=INCONCLUSIVE"
+                echo "redistributeLockedAmount failed"
+
+              fi
+
+            else
+
+              echo "SCENARIO=R03"
+              echo "RESULT=INCONCLUSIVE"
+              echo "FULL restriction setup failed"
+
+            fi
+
+          else
+
+            echo "SCENARIO=R03"
+            echo "RESULT=INCONCLUSIVE"
+            echo "Initial cooldown failed"
+
+          fi
+
+          revert_snapshot "$SNAP"
+
+          echo ""
+          echo "========================================"
+          echo "FINAL STATE TRANSITION RESULT"
+          echo "========================================"
+
+          echo "EXECUTION_MODE=LOCAL_FORK_ONLY"
+          echo "MAINNET_TRANSACTIONS=NONE"
+          echo "LIVE_EXECUTION=PROHIBITED"
+          echo "SUBMISSION=NOT_PERFORMED"
+
+      - name: Stop isolated fork
+        if: always()
+        run: |
+          set +e
+
+          if [ -f anvil.pid ]; then
+            kill "$(cat anvil.pid)" 2>/dev/null || true
+          fi
+
+          echo "LOCAL_FORK_STOPPED=YES"
