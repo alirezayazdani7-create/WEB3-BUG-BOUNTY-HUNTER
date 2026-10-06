@@ -15,6 +15,7 @@ jobs:
     timeout-minutes: 10
 
     steps:
+
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
@@ -164,7 +165,6 @@ jobs:
 
           test -n "$USDE_CODE"
           test -n "$SUSDE_CODE"
-
           test "$SUSDE_ASSET" = "$USDE"
 
           echo "ETHENA_FORK_INSPECTION=PASS"
@@ -185,7 +185,6 @@ jobs:
 
           FULL_ROLE="$(cast keccak "FULL_RESTRICTED_STAKER_ROLE")"
           BLACKLIST_ROLE="$(cast keccak "BLACKLIST_MANAGER_ROLE")"
-          DEFAULT_ROLE="0x0000000000000000000000000000000000000000000000000000000000000000"
 
           echo "=========================================="
           echo "HOLDER CHECK"
@@ -218,164 +217,9 @@ jobs:
           echo "ROLE DISCOVERY"
           echo "=========================================="
 
-          ROLE_GRANTED_TOPIC="$(cast keccak \
-            "RoleGranted(bytes32,address,address)")"
+          BLACKLIST_MANAGER="0x3B0AAf6e6fCd4a7cEEf8c92C32DFeA9E64dC1862"
 
-          echo "ROLE_GRANTED_TOPIC=$ROLE_GRANTED_TOPIC"
-          echo "BLACKLIST_ROLE=$BLACKLIST_ROLE"
-          echo "DEFAULT_ROLE=$DEFAULT_ROLE"
-
-          FORK_BLOCK="$(cast block-number \
-            --rpc-url "$RPC")"
-
-          echo "FORK_BLOCK=$FORK_BLOCK"
-
-
-          echo "=========================================="
-          echo "SEARCH BLACKLIST MANAGER ROLE GRANTS"
-          echo "=========================================="
-
-          FROM_BLOCK_HEX="$(printf '0x%x' 0)"
-          TO_BLOCK_HEX="$(printf '0x%x' "$FORK_BLOCK")"
-
-          FILTER_BLACKLIST="$(
-            printf \
-            '{"fromBlock":"%s","toBlock":"%s","address":"%s","topics":["%s","%s"]}' \
-            "$FROM_BLOCK_HEX" \
-            "$TO_BLOCK_HEX" \
-            "$SUSDE" \
-            "$ROLE_GRANTED_TOPIC" \
-            "$BLACKLIST_ROLE"
-          )"
-
-          echo "BLACKLIST_LOG_FILTER=$FILTER_BLACKLIST"
-
-          LOGS_BLACKLIST="$(
-            cast rpc eth_getLogs "$FILTER_BLACKLIST" \
-            2>/dev/null || true
-          )"
-
-          echo "BLACKLIST_ROLE_LOGS=$LOGS_BLACKLIST"
-
-
-          echo "=========================================="
-          echo "SEARCH DEFAULT ADMIN ROLE GRANTS"
-          echo "=========================================="
-
-          FILTER_ADMIN="$(
-            printf \
-            '{"fromBlock":"%s","toBlock":"%s","address":"%s","topics":["%s","%s"]}' \
-            "$FROM_BLOCK_HEX" \
-            "$TO_BLOCK_HEX" \
-            "$SUSDE" \
-            "$ROLE_GRANTED_TOPIC" \
-            "$DEFAULT_ROLE"
-          )"
-
-          echo "DEFAULT_ADMIN_LOG_FILTER=$FILTER_ADMIN"
-
-          LOGS_ADMIN="$(
-            cast rpc eth_getLogs "$FILTER_ADMIN" \
-            2>/dev/null || true
-          )"
-
-          echo "DEFAULT_ROLE_LOGS=$LOGS_ADMIN"
-
-
-          echo "=========================================="
-          echo "EXTRACT ROLE HOLDERS"
-          echo "=========================================="
-
-          BLACKLIST_MANAGER=""
-
-          if [ "$LOGS_BLACKLIST" != "[]" ] && \
-             [ -n "$LOGS_BLACKLIST" ]; then
-
-            BLACKLIST_MANAGER="$(
-              echo "$LOGS_BLACKLIST" |
-              grep -oE '0x[0-9a-fA-F]{64}' |
-              sed -n '2p' |
-              tail -c 41
-            )"
-
-          fi
-
-          if [ -n "$BLACKLIST_MANAGER" ]; then
-            echo "BLACKLIST_MANAGER_FROM_EVENT=$BLACKLIST_MANAGER"
-          else
-            echo "DIRECT_BLACKLIST_MANAGER_NOT_FOUND"
-          fi
-
-
-          DEFAULT_ADMIN=""
-
-          if [ "$LOGS_ADMIN" != "[]" ] && \
-             [ -n "$LOGS_ADMIN" ]; then
-
-            DEFAULT_ADMIN="$(
-              echo "$LOGS_ADMIN" |
-              grep -oE '0x[0-9a-fA-F]{64}' |
-              sed -n '2p' |
-              tail -c 41
-            )"
-
-          fi
-
-          if [ -n "$DEFAULT_ADMIN" ]; then
-            echo "DEFAULT_ADMIN_FROM_EVENT=$DEFAULT_ADMIN"
-          else
-            echo "DEFAULT_ADMIN_NOT_FOUND"
-          fi
-
-
-          echo "=========================================="
-          echo "ROLE FALLBACK"
-          echo "=========================================="
-
-          if [ -z "$BLACKLIST_MANAGER" ] && \
-             [ -n "$DEFAULT_ADMIN" ]; then
-
-            echo "Using DEFAULT_ADMIN as local-fork role manager"
-
-            ADMIN_ROLE_OK="$(cast call \
-              "$SUSDE" \
-              "hasRole(bytes32,address)(bool)" \
-              "$DEFAULT_ROLE" \
-              "$DEFAULT_ADMIN" \
-              --rpc-url "$RPC")"
-
-            echo "DEFAULT_ADMIN_ROLE_OK=$ADMIN_ROLE_OK"
-
-            test "$ADMIN_ROLE_OK" = "true"
-
-            cast rpc anvil_setBalance \
-              "$DEFAULT_ADMIN" \
-              0x56BC75E2D63100000
-
-            cast rpc anvil_impersonateAccount \
-              "$DEFAULT_ADMIN"
-
-            cast send \
-              "$SUSDE" \
-              "grantRole(bytes32,address)" \
-              "$BLACKLIST_ROLE" \
-              "$DEFAULT_ADMIN" \
-              --rpc-url "$RPC" \
-              --from "$DEFAULT_ADMIN" \
-              --unlocked
-
-            BLACKLIST_MANAGER="$DEFAULT_ADMIN"
-
-            echo "LOCAL_BLACKLIST_MANAGER=$BLACKLIST_MANAGER"
-
-          fi
-
-          test -n "$BLACKLIST_MANAGER"
-
-
-          echo "=========================================="
-          echo "VERIFY BLACKLIST MANAGER"
-          echo "=========================================="
+          echo "BLACKLIST_MANAGER_CANDIDATE=$BLACKLIST_MANAGER"
 
           BLACKLIST_MANAGER_ROLE_OK="$(cast call \
             "$SUSDE" \
@@ -496,7 +340,6 @@ jobs:
           echo "UNSTAKE_EXIT_CODE=$UNSTAKE_STATUS"
           echo "UNSTAKE_OUTPUT=$UNSTAKE_OUTPUT"
 
-
           AFTER="$(cast call \
             "$USDE" \
             "balanceOf(address)(uint256)" \
@@ -511,24 +354,16 @@ jobs:
           echo "=========================================="
 
           if [ "$UNSTAKE_STATUS" -ne 0 ]; then
-
             echo "COOLDOWN_BLACKLIST_UNSTAKE_BYPASS=NOT_CONFIRMED"
             echo "REASON=UNSTAKE_REVERTED"
-
             exit 1
-
           fi
-
 
           if [ "$AFTER" = "$BEFORE" ]; then
-
             echo "COOLDOWN_BLACKLIST_UNSTAKE_BYPASS=NOT_CONFIRMED"
             echo "REASON=NO_USDE_RECEIVED"
-
             exit 1
-
           fi
-
 
           echo "COOLDOWN_BLACKLIST_UNSTAKE_BYPASS=CONFIRMED"
           echo "USDE_BALANCE_CHANGED=YES"
