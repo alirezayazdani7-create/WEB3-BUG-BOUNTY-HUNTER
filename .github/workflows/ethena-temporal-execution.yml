@@ -1,0 +1,570 @@
+name: Ethena Temporal Execution Matrix
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  temporal-execution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Start isolated Mainnet fork
+        env:
+          ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
+        run: |
+          set -euo pipefail
+
+          test -n "$ETH_RPC_URL"
+
+          anvil \
+            --fork-url "$ETH_RPC_URL" \
+            --host 127.0.0.1 \
+            --port 8545 \
+            --chain-id 31337 \
+            --accounts 2 \
+            > anvil.log 2>&1 &
+
+          echo $! > anvil.pid
+
+          RPC="http://127.0.0.1:8545"
+
+          for i in $(seq 1 30); do
+            if cast chain-id --rpc-url "$RPC" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          LOCAL_CHAIN="$(cast chain-id --rpc-url "$RPC")"
+          SOURCE_CHAIN="$(cast chain-id --rpc-url "$ETH_RPC_URL")"
+          FORK_BLOCK="$(cast block-number --rpc-url "$RPC")"
+
+          echo "LOCAL_CHAIN=$LOCAL_CHAIN"
+          echo "SOURCE_CHAIN=$SOURCE_CHAIN"
+          echo "FORK_BLOCK=$FORK_BLOCK"
+
+          test "$LOCAL_CHAIN" = "31337"
+          test "$SOURCE_CHAIN" = "1"
+          test "$FORK_BLOCK" -gt 0
+
+          echo "LOCAL_FORK=PASS"
+
+      - name: Execute temporal scenarios
+        run: |
+          set -u
+
+          RPC="http://127.0.0.1:8545"
+
+          SUSDE="0x9D39A5DE30e57443BfF2A8307A4256c8797A3497"
+          USDE="0x4c9EDD5852cd905f086C759E8383e09bff1E68B3"
+
+          HOLDER="0xA469b399df1c7b4bd8569048d889f131329dffa1"
+          RECEIVER="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+          MANAGER="0x3B0AAf6e6fCd4a7cEEf8c92C32DFeA9E64dC1862"
+
+          FULL_ROLE="$(cast keccak "FULL_RESTRICTED_STAKER_ROLE")"
+          BLACKLIST_ROLE="$(cast keccak "BLACKLIST_MANAGER_ROLE")"
+
+          BYPASS_COUNT=0
+          BLOCKED_COUNT=0
+          INCONCLUSIVE_COUNT=0
+
+          rpc() {
+            cast rpc "$@" --rpc-url "$RPC"
+          }
+
+          impersonate() {
+            rpc anvil_impersonateAccount "$1" >/dev/null
+            rpc anvil_setBalance "$1" 0x3635C9ADC5DEA0000000000 >/dev/null
+          }
+
+          snapshot() {
+            rpc evm_snapshot | tr -d '"' | tail -n 1
+          }
+
+          revert_snapshot() {
+            rpc evm_revert "$1" >/dev/null
+          }
+
+          advance_cooldown() {
+            rpc evm_increaseTime 86401 >/dev/null
+            rpc evm_mine >/dev/null
+          }
+
+          send_tx() {
+            cast send \
+              --unlocked \
+              --from "$1" \
+              "$2" \
+              "$3" \
+              "$4" \
+              "$5" \
+              --rpc-url "$RPC" \
+              >/tmp/cast.out 2>/tmp/cast.err
+          }
+
+          usde_balance() {
+            cast call \
+              "$USDE" \
+              "balanceOf(address)(uint256)" \
+              "$RECEIVER" \
+              --rpc-url "$RPC"
+          }
+
+          report() {
+            echo "SCENARIO=$1 RESULT=$2 DETAIL=$3"
+          }
+
+          echo "========================================"
+          echo "ETHENA TEMPORAL EXECUTION MATRIX"
+          echo "========================================"
+
+          echo "FULL_ROLE=$FULL_ROLE"
+          echo "BLACKLIST_ROLE=$BLACKLIST_ROLE"
+
+          impersonate "$HOLDER"
+          impersonate "$MANAGER"
+
+          MANAGER_OK="$(
+            cast call \
+              "$SUSDE" \
+              "hasRole(bytes32,address)(bool)" \
+              "$BLACKLIST_ROLE" \
+              "$MANAGER" \
+              --rpc-url "$RPC"
+          )"
+
+          echo "BLACKLIST_MANAGER_OK=$MANAGER_OK"
+
+          if [ "$MANAGER_OK" != "true" ]; then
+            echo "ROLE_PRECHECK=FAIL"
+            echo "MATRIX_STATUS=INCONCLUSIVE"
+            exit 0
+          fi
+
+          echo ""
+          echo "=== S01 cooldown -> blacklist -> unstake ==="
+
+          SNAP="$(snapshot)"
+          BEFORE="$(usde_balance)"
+
+          if send_tx \
+            "$HOLDER" \
+            "$SUSDE" \
+            "cooldownShares(uint256)" \
+            "1000000000000000000" \
+            ""; then
+
+            if send_tx \
+              "$MANAGER" \
+              "$SUSDE" \
+              "addToBlacklist(address,bool)" \
+              "$HOLDER" \
+              "true"; then
+
+              advance_cooldown
+
+              if send_tx \
+                "$HOLDER" \
+                "$SUSDE" \
+                "unstake(address)" \
+                "$RECEIVER" \
+                ""; then
+
+                AFTER="$(usde_balance)"
+
+                if [ "$AFTER" != "$BEFORE" ]; then
+                  report \
+                    "S01" \
+                    "BYPASS" \
+                    "Pre-existing cooldown survived FULL restriction and receiver balance changed"
+                  BYPASS_COUNT=$((BYPASS_COUNT + 1))
+                else
+                  report \
+                    "S01" \
+                    "INCONCLUSIVE" \
+                    "unstake succeeded but receiver balance did not change"
+                  INCONCLUSIVE_COUNT=$((INCONCLUSIVE_COUNT + 1))
+                fi
+
+              else
+                report \
+                  "S01" \
+                  "BLOCKED" \
+                  "unstake reverted after FULL restriction"
+                BLOCKED_COUNT=$((BLOCKED_COUNT + 1))
+              fi
+
+            else
+              report \
+                "S01" \
+                "INCONCLUSIVE" \
+                "Blacklist setup failed"
+              INCONCLUSIVE_COUNT=$((INCONCLUSIVE_COUNT + 1))
+            fi
+
+          else
+            report \
+              "S01" \
+              "INCONCLUSIVE" \
+              "Initial cooldown setup failed"
+            INCONCLUSIVE_COUNT=$((INCONCLUSIVE_COUNT + 1))
+          fi
+
+          revert_snapshot "$SNAP"
+
+
+          echo ""
+          echo "=== S05 blacklist -> cooldown ==="
+
+          SNAP="$(snapshot)"
+
+          if send_tx \
+            "$MANAGER" \
+            "$SUSDE" \
+            "addToBlacklist(address,bool)" \
+            "$HOLDER" \
+            "true"; then
+
+            if send_tx \
+              "$HOLDER" \
+              "$SUSDE" \
+              "cooldownShares(uint256)" \
+              "1000000000000000000" \
+              ""; then
+
+              report \
+                "S05" \
+                "BYPASS" \
+                "cooldownShares succeeded while FULL restricted"
+
+              BYPASS_COUNT=$((BYPASS_COUNT + 1))
+
+            else
+
+              report \
+                "S05" \
+                "BLOCKED" \
+                "cooldownShares reverted while FULL restricted"
+
+              BLOCKED_COUNT=$((BLOCKED_COUNT + 1))
+
+            fi
+
+          else
+
+            report \
+              "S05" \
+              "INCONCLUSIVE" \
+              "Blacklist setup failed"
+
+            INCONCLUSIVE_COUNT=$((INCONCLUSIVE_COUNT + 1))
+
+          fi
+
+          revert_snapshot "$SNAP"
+
+
+          echo ""
+          echo "=== S07 blacklist -> approval -> cooldown ==="
+
+          SNAP="$(snapshot)"
+
+          if send_tx \
+            "$MANAGER" \
+            "$SUSDE" \
+            "addToBlacklist(address,bool)" \
+            "$HOLDER" \
+            "true"; then
+
+            if send_tx \
+              "$HOLDER" \
+              "$SUSDE" \
+              "approve(address,uint256)" \
+              "$RECEIVER" \
+              "1000000000000000000"; then
+
+              if send_tx \
+                "$HOLDER" \
+                "$SUSDE" \
+                "cooldownShares(uint256)" \
+                "1000000000000000000" \
+                ""; then
+
+                report \
+                  "S07" \
+                  "BYPASS" \
+                  "Cooldown succeeded after FULL restriction through approval state"
+
+                BYPASS_COUNT=$((BYPASS_COUNT + 1))
+
+              else
+
+                report \
+                  "S07" \
+                  "BLOCKED" \
+                  "Cooldown remained blocked"
+
+                BLOCKED_COUNT=$((BLOCKED_COUNT + 1))
+
+              fi
+
+            else
+
+              report \
+                "S07" \
+                "BLOCKED" \
+                "Approval transaction failed"
+
+              BLOCKED_COUNT=$((BLOCKED_COUNT + 1))
+
+            fi
+
+          else
+
+            report \
+              "S07" \
+              "INCONCLUSIVE" \
+              "Blacklist setup failed"
+
+            INCONCLUSIVE_COUNT=$((INCONCLUSIVE_COUNT + 1))
+
+          fi
+
+          revert_snapshot "$SNAP"
+
+
+          echo ""
+          echo "=== S08 approval -> cooldown -> blacklist -> unstake ==="
+
+          SNAP="$(snapshot)"
+
+          if send_tx \
+            "$HOLDER" \
+            "$SUSDE" \
+            "approve(address,uint256)" \
+            "$RECEIVER" \
+            "1000000000000000000"; then
+
+            if send_tx \
+              "$HOLDER" \
+              "$SUSDE" \
+              "cooldownShares(uint256)" \
+              "1000000000000000000" \
+              ""; then
+
+              if send_tx \
+                "$MANAGER" \
+                "$SUSDE" \
+                "addToBlacklist(address,bool)" \
+                "$HOLDER" \
+                "true"; then
+
+                advance_cooldown
+
+                BEFORE="$(usde_balance)"
+
+                if send_tx \
+                  "$HOLDER" \
+                  "$SUSDE" \
+                  "unstake(address)" \
+                  "$RECEIVER" \
+                  ""; then
+
+                  AFTER="$(usde_balance)"
+
+                  if [ "$AFTER" != "$BEFORE" ]; then
+
+                    report \
+                      "S08" \
+                      "BYPASS" \
+                      "Approval plus later FULL restriction still allowed exit"
+
+                    BYPASS_COUNT=$((BYPASS_COUNT + 1))
+
+                  else
+
+                    report \
+                      "S08" \
+                      "INCONCLUSIVE" \
+                      "unstake succeeded without receiver balance change"
+
+                    INCONCLUSIVE_COUNT=$((INCONCLUSIVE_COUNT + 1))
+
+                  fi
+
+                else
+
+                  report \
+                    "S08" \
+                    "BLOCKED" \
+                    "unstake reverted after later FULL restriction"
+
+                  BLOCKED_COUNT=$((BLOCKED_COUNT + 1))
+
+                fi
+
+              else
+
+                report \
+                  "S08" \
+                  "INCONCLUSIVE" \
+                  "Blacklist setup failed"
+
+                INCONCLUSIVE_COUNT=$((INCONCLUSIVE_COUNT + 1))
+
+              fi
+
+            else
+
+              report \
+                "S08" \
+                "INCONCLUSIVE" \
+                "Cooldown setup failed"
+
+              INCONCLUSIVE_COUNT=$((INCONCLUSIVE_COUNT + 1))
+
+            fi
+
+          else
+
+            report \
+              "S08" \
+              "INCONCLUSIVE" \
+              "Approval setup failed"
+
+            INCONCLUSIVE_COUNT=$((INCONCLUSIVE_COUNT + 1))
+
+          fi
+
+          revert_snapshot "$SNAP"
+
+
+          echo ""
+          echo "=== S21 cooldown -> FULL restriction -> unstake ==="
+
+          SNAP="$(snapshot)"
+
+          if send_tx \
+            "$HOLDER" \
+            "$SUSDE" \
+            "cooldownShares(uint256)" \
+            "1000000000000000000" \
+            ""; then
+
+            if send_tx \
+              "$MANAGER" \
+              "$SUSDE" \
+              "addToBlacklist(address,bool)" \
+              "$HOLDER" \
+              "true"; then
+
+              advance_cooldown
+
+              BEFORE="$(usde_balance)"
+
+              if send_tx \
+                "$HOLDER" \
+                "$SUSDE" \
+                "unstake(address)" \
+                "$RECEIVER" \
+                ""; then
+
+                AFTER="$(usde_balance)"
+
+                if [ "$AFTER" != "$BEFORE" ]; then
+
+                  report \
+                    "S21" \
+                    "BYPASS" \
+                    "FULL restriction added during active cooldown did not block unstake"
+
+                  BYPASS_COUNT=$((BYPASS_COUNT + 1))
+
+                else
+
+                  report \
+                    "S21" \
+                    "INCONCLUSIVE" \
+                    "unstake succeeded without receiver balance change"
+
+                  INCONCLUSIVE_COUNT=$((INCONCLUSIVE_COUNT + 1))
+
+                fi
+
+              else
+
+                report \
+                  "S21" \
+                  "BLOCKED" \
+                  "unstake reverted after FULL restriction transition"
+
+                BLOCKED_COUNT=$((BLOCKED_COUNT + 1))
+
+              fi
+
+            else
+
+              report \
+                "S21" \
+                "INCONCLUSIVE" \
+                "FULL restriction setup failed"
+
+              INCONCLUSIVE_COUNT=$((INCONCLUSIVE_COUNT + 1))
+
+            fi
+
+          else
+
+            report \
+              "S21" \
+              "INCONCLUSIVE" \
+              "Cooldown setup failed"
+
+            INCONCLUSIVE_COUNT=$((INCONCLUSIVE_COUNT + 1))
+
+          fi
+
+          revert_snapshot "$SNAP"
+
+
+          echo ""
+          echo "========================================"
+          echo "FINAL MATRIX RESULT"
+          echo "========================================"
+
+          echo "BYPASS_COUNT=$BYPASS_COUNT"
+          echo "BLOCKED_COUNT=$BLOCKED_COUNT"
+          echo "INCONCLUSIVE_COUNT=$INCONCLUSIVE_COUNT"
+
+          echo "EXECUTION_MODE=LOCAL_FORK_ONLY"
+          echo "MAINNET_TRANSACTIONS=NONE"
+          echo "LIVE_EXECUTION=PROHIBITED"
+          echo "SUBMISSION=NOT_PERFORMED"
+
+          if [ "$INCONCLUSIVE_COUNT" -gt 0 ]; then
+            echo "MATRIX_STATUS=PARTIAL"
+          elif [ "$BYPASS_COUNT" -gt 0 ]; then
+            echo "MATRIX_STATUS=BYPASS_DETECTED"
+          else
+            echo "MATRIX_STATUS=NO_BYPASS_IN_TESTED_SCENARIOS"
+          fi
+
+      - name: Stop isolated fork
+        if: always()
+        run: |
+          set +e
+
+          if [ -f anvil.pid ]; then
+            kill "$(cat anvil.pid)" 2>/dev/null || true
+          fi
+
+          echo "LOCAL_FORK_STOPPED=YES"
