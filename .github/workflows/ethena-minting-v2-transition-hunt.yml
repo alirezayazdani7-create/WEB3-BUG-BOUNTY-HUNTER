@@ -59,19 +59,20 @@ jobs:
           echo "ANVIL_READY=PASS"
           echo "LOCAL_CHAIN_ID=${CHAIN_ID}"
 
-      - name: Run Minting V2 tests
+      - name: Run Minting V2 tests with full trace
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "Running isolated Foundry tests..."
+          echo "Running isolated Foundry tests with full trace..."
           echo "Fork RPC: http://127.0.0.1:8545"
           echo "Live execution: PROHIBITED"
+          echo "Trace verbosity: -vvvv"
 
           forge test \
             --fork-url http://127.0.0.1:8545 \
             --match-path test/MintingV2Transition.t.sol \
-            -vvv
+            -vvvv
 
       - name: Final safety assertion
         shell: bash
