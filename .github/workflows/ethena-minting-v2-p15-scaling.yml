@@ -200,6 +200,9 @@ jobs:
           echo "SUBMISSION=NOT_PERFORMED"
 
           forge test \
+            --via-ir \
+            --optimizer \
+            --optimizer-runs 200 \
             --fork-url http://127.0.0.1:8545 \
             --match-path test/MintingV2P15Scaling.t.sol \
             -vvvvv
