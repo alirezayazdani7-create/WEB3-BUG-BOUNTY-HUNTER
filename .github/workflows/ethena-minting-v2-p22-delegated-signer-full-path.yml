@@ -1,0 +1,99 @@
+name: Ethena Minting V2 P22 Delegated Signer Full Path
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  p22-delegated-signer-full-path:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      EXECUTION_MODE: LOCAL_FORK_ONLY
+      MAINNET_TRANSACTIONS: "NONE"
+      LIVE_EXECUTION: PROHIBITED
+      SUBMISSION: NOT_PERFORMED
+      MAINNET_RPC_URL: "https://ethereum-rpc.publicnode.com"
+      MINTING: "0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Start isolated Anvil fork
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=============================================="
+          echo "ETHENA MINTING V2 P22 DELEGATED SIGNER"
+          echo "FULL MINT PATH"
+          echo "=============================================="
+
+          echo "EXECUTION_MODE=${EXECUTION_MODE}"
+          echo "MAINNET_TRANSACTIONS=${MAINNET_TRANSACTIONS}"
+          echo "LIVE_EXECUTION=${LIVE_EXECUTION}"
+          echo "SUBMISSION=${SUBMISSION}"
+
+          anvil \
+            --fork-url "${MAINNET_RPC_URL}" \
+            --chain-id 31337 \
+            --host 127.0.0.1 \
+            --port 8545 \
+            --auto-impersonate \
+            > /tmp/anvil.log 2>&1 &
+
+          for i in $(seq 1 30); do
+            if cast chain-id \
+              --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1
+            then
+              break
+            fi
+
+            sleep 1
+          done
+
+          CHAIN_ID="$(
+            cast chain-id \
+              --rpc-url http://127.0.0.1:8545
+          )"
+
+          echo "LOCAL_CHAIN_ID=${CHAIN_ID}"
+
+          test "${CHAIN_ID}" = "31337"
+
+      - name: Run P22 delegated signer full path tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          forge test \
+            --via-ir \
+            --optimize \
+            --fork-url http://127.0.0.1:8545 \
+            --match-path test/MintingV2P22DelegatedSignerFullPath.t.sol \
+            -vvvv
+
+      - name: Final safety assertion
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test "${EXECUTION_MODE}" = "LOCAL_FORK_ONLY"
+          test "${MAINNET_TRANSACTIONS}" = "NONE"
+          test "${LIVE_EXECUTION}" = "PROHIBITED"
+          test "${SUBMISSION}" = "NOT_PERFORMED"
+
+          echo "SAFETY_STATUS=PASS"
+
+      - name: Dump Anvil log on failure
+        if: failure()
+        shell: bash
+        run: |
+          cat /tmp/anvil.log || true
