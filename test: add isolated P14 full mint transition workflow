@@ -1,0 +1,338 @@
+name: Ethena Minting V2 P14 Full Path
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  p14-full-path:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      EXECUTION_MODE: LOCAL_FORK_ONLY
+      MAINNET_TRANSACTIONS: "NONE"
+      LIVE_EXECUTION: PROHIBITED
+      SUBMISSION: NOT_PERFORMED
+
+      MAINNET_RPC_URL: https://ethereum-rpc.publicnode.com
+
+      MINTING: 0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3
+      USDE: 0x4c9EDD5852cd905f086C759E8383e09bff1E68B3
+      USDC: 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+
+      ADMIN: 0x3B0AAf6e6fCd4a7cEEf8c92C32DFeA9E64dC1862
+
+      MINTER: 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf
+
+      CUSTODIAN: 0x8f0eE0393Eae7fc1638BD7860a3FEc6a663786AE
+
+      LOCAL_FUNDING_AMOUNT: "3000000"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Start isolated Anvil fork
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=========================================="
+          echo "P14 SAFETY MODE"
+          echo "=========================================="
+          echo "EXECUTION_MODE=${EXECUTION_MODE}"
+          echo "MAINNET_TRANSACTIONS=${MAINNET_TRANSACTIONS}"
+          echo "LIVE_EXECUTION=${LIVE_EXECUTION}"
+          echo "SUBMISSION=${SUBMISSION}"
+          echo "=========================================="
+
+          anvil \
+            --fork-url "${MAINNET_RPC_URL}" \
+            --chain-id 31337 \
+            --host 127.0.0.1 \
+            --port 8545 \
+            > /tmp/anvil.log 2>&1 &
+
+          for i in $(seq 1 30); do
+            if cast chain-id \
+              --rpc-url http://127.0.0.1:8545 \
+              >/dev/null 2>&1; then
+              break
+            fi
+
+            sleep 1
+          done
+
+          CHAIN_ID="$(
+            cast chain-id \
+              --rpc-url http://127.0.0.1:8545
+          )"
+
+          test "${CHAIN_ID}" = "31337"
+
+          echo "ANVIL_READY=PASS"
+          echo "LOCAL_CHAIN_ID=${CHAIN_ID}"
+
+      - name: Prepare isolated local identities
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RPC=http://127.0.0.1:8545
+
+          ADMIN_BALANCE=0x3635C9ADC5DEA000000
+
+          echo "Preparing local-only impersonated admin."
+
+          cast rpc \
+            --rpc-url "${RPC}" \
+            anvil_impersonateAccount \
+            "${ADMIN}"
+
+          cast rpc \
+            --rpc-url "${RPC}" \
+            anvil_setBalance \
+            "${ADMIN}" \
+            "${ADMIN_BALANCE}"
+
+          echo "ADMIN_IMPERSONATION=READY"
+
+      - name: Configure local fork only
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RPC=http://127.0.0.1:8545
+
+          echo "=========================================="
+          echo "LOCAL FORK CONFIGURATION"
+          echo "=========================================="
+
+          MINTER_ROLE="$(
+            cast keccak "MINTER_ROLE"
+          )"
+
+          echo "MINTER_ROLE=${MINTER_ROLE}"
+
+          echo "Granting MINTER_ROLE to Anvil test account."
+
+          cast send \
+            --rpc-url "${RPC}" \
+            --unlocked \
+            --from "${ADMIN}" \
+            "${MINTING}" \
+            "grantRole(bytes32,address)" \
+            "${MINTER_ROLE}" \
+            "${MINTER}"
+
+          echo "Whitelisting local test benefactor."
+
+          cast send \
+            --rpc-url "${RPC}" \
+            --unlocked \
+            --from "${ADMIN}" \
+            "${MINTING}" \
+            "addWhitelistedBenefactor(address)" \
+            "${MINTER}"
+
+          echo "Checking role."
+
+          ROLE_STATUS="$(
+            cast call \
+              --rpc-url "${RPC}" \
+              "${MINTING}" \
+              "hasRole(bytes32,address)(bool)" \
+              "${MINTER_ROLE}" \
+              "${MINTER}"
+          )"
+
+          test "${ROLE_STATUS}" = "true"
+
+          echo "Checking whitelist."
+
+          WHITELIST_STATUS="$(
+            cast call \
+              --rpc-url "${RPC}" \
+              "${MINTING}" \
+              "isWhitelistedBenefactor(address)(bool)" \
+              "${MINTER}"
+          )"
+
+          test "${WHITELIST_STATUS}" = "true"
+
+          echo "MINTER_ROLE=PASS"
+          echo "WHITELIST=PASS"
+
+      - name: Fund local test benefactor with real forked USDC
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RPC=http://127.0.0.1:8545
+
+          FUND_AMOUNT="${LOCAL_FUNDING_AMOUNT}"
+
+          echo "=========================================="
+          echo "LOCAL USDC FUNDING"
+          echo "=========================================="
+          echo "Amount=${FUND_AMOUNT}"
+          echo "No mainnet transaction will be created."
+          echo "=========================================="
+
+          HOLDERS=(
+            "${MINTING}"
+            "0x73691cee20db22f55a6fd0d5948ab00e0fb973b1"
+            "0x92c896161f6b4fc663a91fb638d854bad8cb2f73"
+            "0x4a2be53516f33304b3b88f848ea819f70a5cb67c"
+            "0xDA675a9888e16595C66C6c1DA684dF4e26f8aB69"
+            "0x7f840bf52fdc57f7e2334259cfa7e4ee50793cb1"
+          )
+
+          SELECTED_HOLDER=""
+
+          for HOLDER in "${HOLDERS[@]}"; do
+            BALANCE="$(
+              cast call \
+                --rpc-url "${RPC}" \
+                "${USDC}" \
+                "balanceOf(address)(uint256)" \
+                "${HOLDER}" \
+                | awk '{print $1}'
+            )"
+
+            echo "candidate=${HOLDER}"
+            echo "balance=${BALANCE}"
+
+            if [[ "${BALANCE}" =~ ^[0-9]+$ ]] &&
+               [ "${BALANCE}" -ge "${FUND_AMOUNT}" ]; then
+
+              SELECTED_HOLDER="${HOLDER}"
+              break
+            fi
+          done
+
+          test -n "${SELECTED_HOLDER}"
+
+          echo "SELECTED_USDC_SOURCE=${SELECTED_HOLDER}"
+
+          cast rpc \
+            --rpc-url "${RPC}" \
+            anvil_impersonateAccount \
+            "${SELECTED_HOLDER}"
+
+          cast rpc \
+            --rpc-url "${RPC}" \
+            anvil_setBalance \
+            "${SELECTED_HOLDER}" \
+            "0x3635C9ADC5DEA000000"
+
+          echo "Transferring USDC inside local fork."
+
+          cast send \
+            --rpc-url "${RPC}" \
+            --unlocked \
+            --from "${SELECTED_HOLDER}" \
+            "${USDC}" \
+            "transfer(address,uint256)" \
+            "${MINTER}" \
+            "${FUND_AMOUNT}"
+
+          LOCAL_BALANCE="$(
+            cast call \
+              --rpc-url "${RPC}" \
+              "${USDC}" \
+              "balanceOf(address)(uint256)" \
+              "${MINTER}" \
+              | awk '{print $1}'
+          )"
+
+          test "${LOCAL_BALANCE}" -ge "${FUND_AMOUNT}"
+
+          echo "LOCAL_USDC_FUNDING=PASS"
+          echo "MINTER_USDC_BALANCE=${LOCAL_BALANCE}"
+
+      - name: Verify custodian route
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RPC=http://127.0.0.1:8545
+
+          ROUTE_RESULT="$(
+            cast call \
+              --rpc-url "${RPC}" \
+              "${MINTING}" \
+              "verifyRoute((address[],uint128[]))(bool)" \
+              "[${CUSTODIAN}]" \
+              "[10000]"
+          )"
+
+          test "${ROUTE_RESULT}" = "true"
+
+          CUSTODIAN_STATUS="$(
+            cast call \
+              --rpc-url "${RPC}" \
+              "${MINTING}" \
+              "isCustodianAddress(address)(bool)" \
+              "${CUSTODIAN}"
+          )"
+
+          test "${CUSTODIAN_STATUS}" = "true"
+
+          echo "CUSTODIAN_ROUTE=PASS"
+          echo "CUSTODIAN=${CUSTODIAN}"
+
+      - name: Run P14 full-path tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=========================================="
+          echo "P14 FULL MINT TRANSITION"
+          echo "=========================================="
+          echo "Path under test:"
+          echo "Signed Order"
+          echo " -> verifyOrder"
+          echo " -> verifyRoute"
+          echo " -> verifyStablesLimit"
+          echo " -> nonce/deduplication"
+          echo " -> collateral transfer"
+          echo " -> USDe mint"
+          echo " -> accounting invariants"
+          echo "=========================================="
+
+          forge test \
+            --fork-url http://127.0.0.1:8545 \
+            --match-path test/MintingV2P14FullPath.t.sol \
+            -vvvvv
+
+      - name: Final local-only safety assertion
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test "${EXECUTION_MODE}" = "LOCAL_FORK_ONLY"
+          test "${MAINNET_TRANSACTIONS}" = "NONE"
+          test "${LIVE_EXECUTION}" = "PROHIBITED"
+          test "${SUBMISSION}" = "NOT_PERFORMED"
+
+          echo "SAFETY_STATUS=PASS"
+          echo "MAINNET_TRANSACTIONS=NONE"
+          echo "LIVE_EXECUTION=PROHIBITED"
+          echo "SUBMISSION=NOT_PERFORMED"
+
+      - name: Dump Anvil log on failure
+        if: failure()
+        shell: bash
+        run: |
+          echo "=========================================="
+          echo "ANVIL LOG"
+          echo "=========================================="
+
+          cat /tmp/anvil.log || true
