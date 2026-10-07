@@ -3,9 +3,7 @@ pragma solidity ^0.8.20;
 
 interface Vm {
     function prank(address msgSender) external;
-
     function startPrank(address msgSender) external;
-
     function stopPrank() external;
 
     function store(
@@ -303,7 +301,7 @@ contract MintingV2P18ERC1271FullPathTest {
                     wallet,
 
                 beneficiary:
-                    MINTER,
+                    wallet,
 
                 collateral_asset:
                     USDC,
