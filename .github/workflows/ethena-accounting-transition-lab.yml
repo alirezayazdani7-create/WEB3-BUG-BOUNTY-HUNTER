@@ -411,7 +411,7 @@ jobs:
 
           rev "$S"
 
-          echo "=== A04 cooldown -> duration 0 -> unstake ==="
+          echo "=== A04 cooldown -> duration 0 -> IMMEDIATE unstake ==="
 
           S="$(snap)"
 
@@ -441,8 +441,7 @@ jobs:
             echo "A04_PENDING_BEFORE_UNSTAKE=$P4"
             echo "A04_SILO_BEFORE_UNSTAKE=$Z_BEFORE_UNSTAKE"
 
-            rpc evm_increaseTime 86401 >/dev/null
-            rpc evm_mine >/dev/null
+            echo "A04_ZERO_DURATION_IMMEDIATE_UNSTAKE_TEST=START"
 
             if \
               tx \
@@ -451,6 +450,8 @@ jobs:
                 "unstake(address)" \
                 "$RECEIVER"
             then
+
+              echo "A04_ZERO_DURATION_IMMEDIATE_UNSTAKE=PASS"
 
               AFTER_R="$(usde_bal "$RECEIVER")"
 
@@ -497,7 +498,10 @@ jobs:
               echo "A04_RESULT=MEASURED"
 
             else
+
+              echo "A04_ZERO_DURATION_IMMEDIATE_UNSTAKE=FAIL"
               echo "A04_RESULT=BLOCKED"
+
             fi
 
           else
