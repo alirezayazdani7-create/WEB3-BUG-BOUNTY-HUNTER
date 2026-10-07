@@ -2,7 +2,10 @@
 pragma solidity ^0.8.20;
 
 interface Vm {
-    function sign(uint256 privateKey, bytes32 digest)
+    function sign(
+        uint256 privateKey,
+        bytes32 digest
+    )
         external
         returns (
             uint8 v,
@@ -11,21 +14,48 @@ interface Vm {
         );
 
     function prank(address msgSender) external;
+
+    /*
+     * Foundry ERC20 deal cheatcode.
+     *
+     * IMPORTANT:
+     * This modifies ONLY the local Anvil fork.
+     * It does not modify Ethereum Mainnet.
+     */
+    function deal(
+        address token,
+        address to,
+        uint256 give
+    ) external;
 }
 
+
 interface IERC20Minimal {
-    function balanceOf(address account)
+
+    function balanceOf(
+        address account
+    )
         external
         view
         returns (uint256);
+
+    function approve(
+        address spender,
+        uint256 amount
+    )
+        external
+        returns (bool);
 }
 
+
 interface IUSDeMinimal is IERC20Minimal {
+
     function totalSupply()
         external
         view
         returns (uint256);
 }
+
 
 interface IEthenaMintingP14 {
 
@@ -40,31 +70,48 @@ interface IEthenaMintingP14 {
     }
 
     struct Order {
+
         string order_id;
+
         OrderType order_type;
+
         uint120 expiry;
+
         uint128 nonce;
+
         address benefactor;
+
         address beneficiary;
+
         address collateral_asset;
+
         uint128 collateral_amount;
+
         uint128 usde_amount;
     }
 
+
     struct Route {
+
         address[] addresses;
+
         uint128[] ratios;
     }
 
+
     struct Signature {
+
         SignatureType signature_type;
+
         bytes signature_bytes;
     }
+
 
     function usde()
         external
         view
         returns (address);
+
 
     function hashOrder(
         Order calldata order
@@ -72,6 +119,7 @@ interface IEthenaMintingP14 {
         external
         view
         returns (bytes32);
+
 
     function verifyOrder(
         Order calldata order,
@@ -81,12 +129,14 @@ interface IEthenaMintingP14 {
         view
         returns (bytes32);
 
+
     function verifyRoute(
         Route calldata route
     )
         external
         view
         returns (bool);
+
 
     function verifyStablesLimit(
         uint128 collateralAmount,
@@ -97,6 +147,7 @@ interface IEthenaMintingP14 {
         external
         view
         returns (bool);
+
 
     function mint(
         Order calldata order,
@@ -118,6 +169,7 @@ contract MintingV2P14FullPathTest {
     address constant MINTING =
         0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3;
 
+
     address constant USDC =
         0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
 
@@ -127,14 +179,14 @@ contract MintingV2P14FullPathTest {
      * LOCAL FORK TEST ACTOR
      * ============================================================
      *
-     * IMPORTANT:
-     * This is an Anvil-local test identity only.
+     * This is the standard Anvil local test account.
      *
      * It is NOT a Mainnet key.
      */
 
     address constant MINTER =
         0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf;
+
 
     uint256 constant MINTER_PRIVATE_KEY =
         0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
@@ -171,10 +223,15 @@ contract MintingV2P14FullPathTest {
 
 
     IEthenaMintingP14 constant target =
-        IEthenaMintingP14(MINTING);
+        IEthenaMintingP14(
+            MINTING
+        );
+
 
     IERC20Minimal constant usdc =
-        IERC20Minimal(USDC);
+        IERC20Minimal(
+            USDC
+        );
 
 
     /*
@@ -244,10 +301,8 @@ contract MintingV2P14FullPathTest {
     {
 
         /*
-         * Let the deployed contract produce the exact
+         * Ask the deployed contract for the exact
          * EIP-712 order digest.
-         *
-         * We do NOT reconstruct the domain separator locally.
          */
 
         digest =
@@ -328,19 +383,65 @@ contract MintingV2P14FullPathTest {
      * FULL MINT PATH
      *
      * 999,901 micro-USDC
-     *              ↓
+     *          ↓
      * 1 USDe
      *
      * Expected:
      * ACCEPT
      *
-     * This is the 99-unit boundary.
+     * Difference from exact parity:
+     *
+     * 1,000,000 - 999,901 = 99
      * ============================================================
      */
 
     function test_P14_01_full_mint_accepts_99_unit_gap()
         external
     {
+
+        /*
+         * --------------------------------------------------------
+         * LOCAL FORK FUNDING
+         * --------------------------------------------------------
+         *
+         * Give the local Anvil tester exactly enough USDC
+         * for the boundary mint.
+         *
+         * This changes ONLY the local fork state.
+         *
+         * No Mainnet transaction is sent.
+         */
+
+        vm.deal(
+            USDC,
+            MINTER,
+            1_000_000
+        );
+
+
+        /*
+         * --------------------------------------------------------
+         * LOCAL USDC APPROVAL
+         * --------------------------------------------------------
+         */
+
+        vm.prank(
+            MINTER
+        );
+
+
+        bool approvalOk =
+            usdc.approve(
+                MINTING,
+                type(uint256).max
+            );
+
+
+        assertTrue(
+            approvalOk,
+            "local USDC approval failed"
+        );
+
 
         /*
          * --------------------------------------------------------
@@ -382,18 +483,6 @@ contract MintingV2P14FullPathTest {
          * --------------------------------------------------------
          * ORDER
          * --------------------------------------------------------
-         *
-         * Exact theoretical parity:
-         *
-         * 1,000,000 micro-USDC
-         *
-         * Actual:
-         *
-         *   999,901
-         *
-         * Difference:
-         *
-         *       99
          */
 
         IEthenaMintingP14.Order memory order =
@@ -500,7 +589,7 @@ contract MintingV2P14FullPathTest {
          * --------------------------------------------------------
          * CHECK #4
          *
-         * DEPLOYED CONTRACT SIGNATURE VALIDATION
+         * DEPLOYED SIGNATURE VALIDATION
          * --------------------------------------------------------
          */
 
@@ -573,7 +662,7 @@ contract MintingV2P14FullPathTest {
          * --------------------------------------------------------
          * INVARIANT #1
          *
-         * BENEFICIARY RECEIVES EXACT USDE
+         * BENEFICIARY RECEIVES EXACT USDe
          * --------------------------------------------------------
          */
 
@@ -588,7 +677,7 @@ contract MintingV2P14FullPathTest {
          * --------------------------------------------------------
          * INVARIANT #2
          *
-         * TOTAL SUPPLY DELTA
+         * TOTAL SUPPLY
          * --------------------------------------------------------
          */
 
@@ -659,19 +748,28 @@ contract MintingV2P14FullPathTest {
      * FULL MINT PATH
      *
      * 999,900 micro-USDC
-     *              ↓
+     *          ↓
      * 1 USDe
      *
      * Expected:
      * REJECT
      *
-     * This is the 100-unit boundary.
+     * Difference:
+     *
+     * 1,000,000 - 999,900 = 100
      * ============================================================
      */
 
     function test_P14_02_full_mint_rejects_100_unit_gap()
         external
     {
+
+        /*
+         * No USDC funding is required here.
+         *
+         * The test must reject at the stable-limit
+         * boundary before collateral transfer.
+         */
 
         IEthenaMintingP14.Order memory order =
             IEthenaMintingP14.Order({
@@ -706,6 +804,12 @@ contract MintingV2P14FullPathTest {
                     1e18
             });
 
+
+        /*
+         * --------------------------------------------------------
+         * ROUTE
+         * --------------------------------------------------------
+         */
 
         IEthenaMintingP14.Route memory route =
             _route();
@@ -772,8 +876,7 @@ contract MintingV2P14FullPathTest {
          * --------------------------------------------------------
          * EXECUTE FULL MINT
          *
-         * We deliberately use low-level call so that
-         * REVERT is converted into a boolean assertion.
+         * Low-level call converts revert into bool.
          * --------------------------------------------------------
          */
 
@@ -809,8 +912,7 @@ contract MintingV2P14FullPathTest {
 
 
         /*
-         * Keep revertData referenced so the compiler does not
-         * optimize away the diagnostic value.
+         * Keep diagnostic data referenced.
          */
 
         revertData;
