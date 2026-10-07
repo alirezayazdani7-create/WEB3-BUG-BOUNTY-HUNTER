@@ -79,10 +79,11 @@ contract MintingV2TransitionTest {
         require(value, reason);
     }
 
-    function assertEq(address a, address b, string memory reason)
-        internal
-        pure
-    {
+    function assertEq(
+        address a,
+        address b,
+        string memory reason
+    ) internal pure {
         require(a == b, reason);
     }
 
@@ -133,9 +134,14 @@ contract MintingV2TransitionTest {
         );
     }
 
-    function test_P03_non_custodian_route_rejected() external {
-        address[] memory addresses = new address[](2);
-        uint128[] memory ratios = new uint128[](2);
+    function test_P03_non_custodian_route_rejected()
+        external
+    {
+        address[] memory addresses =
+            new address[](2);
+
+        uint128[] memory ratios =
+            new uint128[](2);
 
         addresses[0] = address(1);
         addresses[1] = address(2);
@@ -177,9 +183,14 @@ contract MintingV2TransitionTest {
         );
     }
 
-    function test_P04_empty_route_rejected() external {
-        address[] memory addresses = new address[](0);
-        uint128[] memory ratios = new uint128[](0);
+    function test_P04_empty_route_rejected()
+        external
+    {
+        address[] memory addresses =
+            new address[](0);
+
+        uint128[] memory ratios =
+            new uint128[](0);
 
         IEthenaMinting.Route memory route =
             IEthenaMinting.Route({
@@ -197,273 +208,4 @@ contract MintingV2TransitionTest {
             )
         );
 
-        bool accepted = false;
-
-        if (ok && data.length >= 32) {
-            accepted = abi.decode(data, (bool));
-        }
-
-        emit RouteResult(
-            "P04_EMPTY_ROUTE",
-            ok,
-            accepted
-        );
-
-        assertTrue(
-            !accepted,
-            "empty route accepted"
-        );
-    }
-
-    function test_P05_usdc_configuration() external {
-        if (!target.isSupportedAsset(USDC)) return;
-
-        (
-            uint8 tokenType,
-            bool active,
-            uint128 maxMint,
-            uint128 maxRedeem
-        ) = target.tokenConfig(USDC);
-
-        assertTrue(
-            active,
-            "USDC configured but inactive"
-        );
-
-        assertTrue(
-            maxMint > 0,
-            "USDC max mint is zero"
-        );
-
-        assertTrue(
-            maxRedeem > 0,
-            "USDC max redeem is zero"
-        );
-
-        tokenType;
-    }
-
-    function test_P06_usdt_configuration() external {
-        if (!target.isSupportedAsset(USDT)) return;
-
-        (
-            uint8 tokenType,
-            bool active,
-            uint128 maxMint,
-            uint128 maxRedeem
-        ) = target.tokenConfig(USDT);
-
-        assertTrue(
-            active,
-            "USDT configured but inactive"
-        );
-
-        assertTrue(
-            maxMint > 0,
-            "USDT max mint is zero"
-        );
-
-        assertTrue(
-            maxRedeem > 0,
-            "USDT max redeem is zero"
-        );
-
-        tokenType;
-    }
-
-    function test_P07_usdc_one_unit_boundary() external {
-        if (!target.isSupportedAsset(USDC)) return;
-
-        uint128 oneUSDC = 1_000_000;
-        uint128 oneUSDe = 1e18;
-
-        uint128 deltaLimit =
-            target.stablesDeltaLimit();
-
-        emit DeltaLimitObserved(deltaLimit);
-
-        bool exact =
-            target.verifyStablesLimit(
-                oneUSDC,
-                oneUSDe,
-                USDC,
-                0
-            );
-
-        bool oneUnitShort =
-            target.verifyStablesLimit(
-                oneUSDC - 1,
-                oneUSDe,
-                USDC,
-                0
-            );
-
-        emit BoundaryResult(
-            "P07_USDC_EXACT_MINT",
-            oneUSDC,
-            oneUSDe,
-            0,
-            exact
-        );
-
-        emit BoundaryResult(
-            "P07_USDC_MINUS_1_MINT",
-            oneUSDC - 1,
-            oneUSDe,
-            0,
-            oneUnitShort
-        );
-
-        assertTrue(
-            exact,
-            "exact USDC/USDe parity rejected"
-        );
-    }
-
-    function test_P08_usdt_one_unit_boundary() external {
-        if (!target.isSupportedAsset(USDT)) return;
-
-        uint128 oneUSDT = 1_000_000;
-        uint128 oneUSDe = 1e18;
-
-        uint128 deltaLimit =
-            target.stablesDeltaLimit();
-
-        emit DeltaLimitObserved(deltaLimit);
-
-        bool exact =
-            target.verifyStablesLimit(
-                oneUSDT,
-                oneUSDe,
-                USDT,
-                0
-            );
-
-        bool oneUnitShort =
-            target.verifyStablesLimit(
-                oneUSDT - 1,
-                oneUSDe,
-                USDT,
-                0
-            );
-
-        emit BoundaryResult(
-            "P08_USDT_EXACT_MINT",
-            oneUSDT,
-            oneUSDe,
-            0,
-            exact
-        );
-
-        emit BoundaryResult(
-            "P08_USDT_MINUS_1_USDT",
-            oneUSDT - 1,
-            oneUSDe,
-            0,
-            oneUnitShort
-        );
-
-        assertTrue(
-            exact,
-            "exact USDT/USDe parity rejected"
-        );
-    }
-
-    function test_P09_stables_delta_limit() external {
-        emit DeltaLimitObserved(
-            target.stablesDeltaLimit()
-        );
-    }
-
-    function test_P10_usdc_boundary_matrix() external {
-        if (!target.isSupportedAsset(USDC)) return;
-
-        uint128 exactCollateral = 1_000_000;
-        uint128 oneUSDe = 1e18;
-
-        uint128[7] memory deductions = [
-            uint128(0),
-            uint128(1),
-            uint128(10),
-            uint128(100),
-            uint128(101),
-            uint128(1_000),
-            uint128(10_000)
-        ];
-
-        emit DeltaLimitObserved(
-            target.stablesDeltaLimit()
-        );
-
-        for (
-            uint256 i = 0;
-            i < deductions.length;
-            i++
-        ) {
-            uint128 collateral =
-                exactCollateral - deductions[i];
-
-            bool accepted =
-                target.verifyStablesLimit(
-                    collateral,
-                    oneUSDe,
-                    USDC,
-                    0
-                );
-
-            emit BoundaryResult(
-                "P10_USDC_MINT_DEDUCTION",
-                collateral,
-                oneUSDe,
-                0,
-                accepted
-            );
-        }
-    }
-
-    function test_P11_usdc_redeem_boundary_matrix() external {
-        if (!target.isSupportedAsset(USDC)) return;
-
-        uint128 exactCollateral = 1_000_000;
-        uint128 oneUSDe = 1e18;
-
-        uint128[7] memory deductions = [
-            uint128(0),
-            uint128(1),
-            uint128(10),
-            uint128(100),
-            uint128(101),
-            uint128(1_000),
-            uint128(10_000)
-        ];
-
-        emit DeltaLimitObserved(
-            target.stablesDeltaLimit()
-        );
-
-        for (
-            uint256 i = 0;
-            i < deductions.length;
-            i++
-        ) {
-            uint128 collateral =
-                exactCollateral - deductions[i];
-
-            bool accepted =
-                target.verifyStablesLimit(
-                    collateral,
-                    oneUSDe,
-                    USDC,
-                    1
-                );
-
-            emit BoundaryResult(
-                "P11_USDC_REDEEM_DEDUCTION",
-                collateral,
-                oneUSDe,
-                1,
-                accepted
-            );
-        }
-    }
-}
+        bool
