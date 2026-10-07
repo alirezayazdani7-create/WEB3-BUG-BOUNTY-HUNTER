@@ -44,10 +44,6 @@ interface IEthenaMinting {
         returns (uint128);
 }
 
-interface IERC20Metadata {
-    function decimals() external view returns (uint8);
-}
-
 contract MintingV2TransitionTest {
     address constant MINTING =
         0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3;
@@ -57,7 +53,7 @@ contract MintingV2TransitionTest {
 
     // Mainnet USDC
     address constant USDC =
-        0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48;
+        0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
 
     // Mainnet USDT
     address constant USDT =
@@ -81,6 +77,12 @@ contract MintingV2TransitionTest {
         require(a == b, reason);
     }
 
+    /*
+     * P01
+     *
+     * Confirm that the deployed Ethena Minting V2 contract
+     * is bound to the expected USDe token.
+     */
     function test_P01_usde_binding()
         external
     {
@@ -91,6 +93,22 @@ contract MintingV2TransitionTest {
         );
     }
 
+    /*
+     * P02
+     *
+     * Measure the nonce bitmap collision caused by the
+     * uint64 truncation in invalidatorSlot.
+     *
+     * This test is observation-only.
+     *
+     * nonce A:
+     *     0x1234
+     *
+     * nonce B:
+     *     0x1234 + 2^64
+     *
+     * They should map to the same bitmap slot and bit.
+     */
     function test_P02_nonce_boundary()
         external
     {
@@ -118,14 +136,6 @@ contract MintingV2TransitionTest {
             )
         );
 
-        /*
-         * Measurement only.
-         *
-         * These two uint128 nonce values should collide
-         * under the uint64 slot calculation.
-         *
-         * This is NOT treated as a vulnerability by itself.
-         */
         assertTrue(
             slotA == slotB,
             "expected nonce slot collision not observed"
@@ -142,6 +152,11 @@ contract MintingV2TransitionTest {
         );
     }
 
+    /*
+     * P03
+     *
+     * An arbitrary non-custodian route must be rejected.
+     */
     function test_P03_non_custodian_route_rejected()
         external
     {
@@ -172,6 +187,11 @@ contract MintingV2TransitionTest {
         );
     }
 
+    /*
+     * P04
+     *
+     * Empty route must be rejected.
+     */
     function test_P04_empty_route_rejected()
         external
     {
@@ -196,6 +216,11 @@ contract MintingV2TransitionTest {
         );
     }
 
+    /*
+     * P05
+     *
+     * Inspect the current USDC configuration.
+     */
     function test_P05_usdc_configuration()
         external
     {
@@ -231,6 +256,11 @@ contract MintingV2TransitionTest {
         tokenType;
     }
 
+    /*
+     * P06
+     *
+     * Inspect the current USDT configuration.
+     */
     function test_P06_usdt_configuration()
         external
     {
@@ -267,29 +297,26 @@ contract MintingV2TransitionTest {
     }
 
     /*
-     * CRITICAL BOUNDARY TEST
+     * P07
      *
-     * USDC has 6 decimals while USDe has 18.
+     * USDC has 6 decimals.
+     * USDe has 18 decimals.
      *
-     * 1 USDC = 1e6
-     * 1 USDe = 1e18
-     *
-     * We test a 1-unit collateral shortfall:
+     * Exact parity:
      *
      * 1,000,000 USDC units
-     * versus
+     * =
      * 1 USDe
      *
-     * then:
+     * Then test a one-unit collateral shortfall:
      *
      * 999,999 USDC units
      * versus
      * 1 USDe
      *
-     * The second case is deliberately one micro-USDC
-     * below parity.
+     * The shortfall result is deliberately NOT asserted.
      *
-     * We only record the contract's actual result.
+     * We want to observe the real contract behavior first.
      */
     function test_P07_usdc_one_unit_boundary()
         external
@@ -324,7 +351,7 @@ contract MintingV2TransitionTest {
             );
 
         /*
-         * Exact parity must pass.
+         * Exact parity should be accepted.
          */
         assertTrue(
             exact,
@@ -332,16 +359,17 @@ contract MintingV2TransitionTest {
         );
 
         /*
-         * Do not assert the shortfall result.
-         *
-         * We are measuring whether integer rounding permits
-         * a one-unit collateral discrepancy under the live
-         * stablesDeltaLimit.
+         * Observation only.
          */
         deltaLimit;
         oneUnitShort;
     }
 
+    /*
+     * P08
+     *
+     * Same one-unit boundary test for USDT.
+     */
     function test_P08_usdt_one_unit_boundary()
         external
     {
@@ -371,28 +399,32 @@ contract MintingV2TransitionTest {
                 0
             );
 
+        /*
+         * Exact parity should be accepted.
+         */
         assertTrue(
             exact,
             "exact USDT/USDe parity rejected"
         );
 
+        /*
+         * Observation only.
+         */
         oneUnitShort;
     }
 
-    function test_P09_zero_delta_configuration()
+    /*
+     * P09
+     *
+     * Read the current stablecoin price delta limit.
+     */
+    function test_P09_stables_delta_limit()
         external
         view
     {
         uint128 limit =
             target.stablesDeltaLimit();
 
-        /*
-         * Observation only.
-         *
-         * A zero limit means the pricing check is expected
-         * to enforce exact parity subject to implementation
-         * rounding.
-         */
         limit;
     }
 }
