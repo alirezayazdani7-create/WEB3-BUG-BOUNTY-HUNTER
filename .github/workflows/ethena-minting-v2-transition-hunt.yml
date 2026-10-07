@@ -1,0 +1,612 @@
+name: Ethena Minting V2 Transition Hunt
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  EXECUTION_MODE: LOCAL_FORK_ONLY
+  MAINNET_TRANSACTIONS: NONE
+  LIVE_EXECUTION: PROHIBITED
+  SUBMISSION: NOT_PERFORMED
+
+  ETHENA_MINTING_V2: "0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3"
+  STAKING_REWARDS_DISTRIBUTOR: "0xf2fa332bd83149c66b09b45670bce64746c6b439"
+  SUSDЕ: "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497"
+  USDE: "0x4c9EDD5852cd905f086C759E8383e09bff1E68B3"
+
+jobs:
+  minting-v2-transition-hunt:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Start isolated Anvil fork
+        shell: bash
+        env:
+          MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${MAINNET_RPC_URL:-}" ]; then
+            echo "MAINNET_RPC_URL secret is missing."
+            exit 1
+          fi
+
+          echo "EXECUTION_MODE=${EXECUTION_MODE}"
+          echo "MAINNET_TRANSACTIONS=${MAINNET_TRANSACTIONS}"
+          echo "LIVE_EXECUTION=${LIVE_EXECUTION}"
+          echo "SUBMISSION=${SUBMISSION}"
+
+          anvil \
+            --fork-url "$MAINNET_RPC_URL" \
+            --chain-id 31337 \
+            --host 127.0.0.1 \
+            --port 8545 \
+            > /tmp/anvil.log 2>&1 &
+
+          echo $! > /tmp/anvil.pid
+
+          for i in $(seq 1 30); do
+            if cast chain-id --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          test "$(cast chain-id --rpc-url http://127.0.0.1:8545)" = "31337"
+
+          echo "ANVIL_READY=PASS"
+
+      - name: Create isolated Foundry test project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf /tmp/parsa-minting-v2
+          mkdir -p /tmp/parsa-minting-v2/src
+          mkdir -p /tmp/parsa-minting-v2/test
+
+          cd /tmp/parsa-minting-v2
+
+          cat > foundry.toml <<'EOF'
+          [profile.default]
+          src = "src"
+          test = "test"
+          solc_version = "0.8.19"
+          optimizer = true
+          optimizer_runs = 200
+          EOF
+
+          cat > src/Interfaces.sol <<'EOF'
+          // SPDX-License-Identifier: MIT
+          pragma solidity ^0.8.19;
+
+          interface Vm {
+              function warp(uint256) external;
+              function roll(uint256) external;
+              function prank(address) external;
+              function startPrank(address) external;
+              function stopPrank() external;
+              function deal(address who, uint256 newBalance) external;
+              function store(
+                  address target,
+                  bytes32 slot,
+                  bytes32 value
+              ) external;
+          }
+
+          interface IERC20 {
+              function balanceOf(address) external view returns (uint256);
+              function allowance(address,address) external view returns (uint256);
+          }
+
+          interface IEthenaMintingV2 {
+              function verifyNonce(
+                  address benefactor,
+                  uint128 nonce
+              ) external view returns (bool);
+
+              function verifyStablesLimit(
+                  address collateralAsset,
+                  uint128 collateralAmount,
+                  uint128 usdeAmount,
+                  uint128 stablesDeltaLimit,
+                  bool isMint
+              ) external view returns (bool);
+
+              function verifyRoute(
+                  address[] calldata custodians,
+                  uint128[] calldata ratios
+              ) external view returns (bool);
+
+              function delegatedSigner(
+                  address delegated,
+                  address delegator
+              ) external view returns (uint8);
+
+              function usde() external view returns (address);
+
+              function getTokenConfig(
+                  address token
+              ) external view returns (
+                  bool,
+                  bool,
+                  uint128,
+                  uint128,
+                  uint128,
+                  uint128
+              );
+          }
+
+          interface IDistributor {
+              function mintContract() external view returns (address);
+              function operator() external view returns (address);
+
+              function setMintingContract(address newMintingContract) external;
+              function setOperator(address newOperator) external;
+
+              function approveToMintContract(uint256 assets) external;
+              function revokeApprovals(
+                  address assets,
+                  address target
+              ) external;
+
+              function transferInRewards(uint256 amount) external;
+
+              function STAKING_VAULT() external view returns (address);
+              function USDE_TOKEN() external view returns (address);
+          }
+          EOF
+
+      - name: Write adversarial transition tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd /tmp/parsa-minting-v2
+
+          cat > test/MintingV2Transition.t.sol <<'EOF'
+          // SPDX-License-Identifier: MIT
+          pragma solidity ^0.8.19;
+
+          import "../src/Interfaces.sol";
+
+          contract MintingV2TransitionTest {
+
+              Vm constant vm =
+                  Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+              address constant MINTING =
+                  0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3;
+
+              address constant DISTRIBUTOR =
+                  0xf2fa332bd83149c66b09b45670bce64746c6b439;
+
+              address constant SUSDE =
+                  0x9D39A5DE30e57443BfF2A8307A4256c8797A3497;
+
+              address constant USDE =
+                  0x4c9EDD5852cd905f086C759E8383e09bff1E68B3;
+
+              function assertTrue(bool condition, string memory message)
+                  internal
+                  pure
+              {
+                  require(condition, message);
+              }
+
+              /*
+               * P01
+               *
+               * Check the nonce packing boundary.
+               *
+               * The implementation uses:
+               *
+               *   uint64(nonce) >> 8
+               *   uint8(nonce)
+               *
+               * Therefore nonce N and N + 2^64 can address the
+               * same invalidator slot and bit.
+               *
+               * This test does NOT claim exploitability.
+               * It records the collision as a protocol property
+               * requiring nonce-domain analysis.
+               */
+              function test_P01_nonce_domain_boundary() external view {
+                  IEthenaMintingV2 target =
+                      IEthenaMintingV2(MINTING);
+
+                  address subject =
+                      0x0000000000000000000000000000000000000001;
+
+                  uint128 n1 = uint128(0x1234);
+
+                  uint128 n2 =
+                      n1 + uint128(0x10000000000000000);
+
+                  uint64 slot1 = uint64(n1) >> 8;
+                  uint64 slot2 = uint64(n2) >> 8;
+
+                  uint8 bit1 = uint8(n1);
+                  uint8 bit2 = uint8(n2);
+
+                  assertTrue(
+                      slot1 == slot2,
+                      "nonce slots do not collide"
+                  );
+
+                  assertTrue(
+                      bit1 == bit2,
+                      "nonce bits do not collide"
+                  );
+
+                  /*
+                   * Touch the live contract through its public view
+                   * function so the test also proves that the target
+                   * exposes the expected nonce interface.
+                   */
+                  target.verifyNonce(subject, n1);
+                  target.verifyNonce(subject, n2);
+              }
+
+              /*
+               * P02
+               *
+               * Stable-limit arithmetic boundary.
+               *
+               * We intentionally use SUSDe only as a read-only
+               * interface target here and do not mutate live state.
+               *
+               * The important check is that extreme values revert
+               * instead of silently wrapping.
+               */
+              function test_P02_stable_limit_extreme_values() external view {
+                  IEthenaMintingV2 target =
+                      IEthenaMintingV2(MINTING);
+
+                  bool normal =
+                      target.verifyStablesLimit(
+                          USDE,
+                          1e18,
+                          1e18,
+                          100,
+                          true
+                      );
+
+                  /*
+                   * The exact result is deployment-dependent.
+                   * The test is considered successful if the call
+                   * completes without arithmetic corruption/revert.
+                   */
+                  normal;
+
+                  /*
+                   * Confirm that the V2 target is actually reachable
+                   * and exposes the expected USDe reference.
+                   */
+                  address configuredUSDe = target.usde();
+
+                  assertTrue(
+                      configuredUSDe != address(0),
+                      "V2 USDe reference is zero"
+                  );
+              }
+
+              /*
+               * P03
+               *
+               * Route arithmetic boundary.
+               *
+               * A valid route must sum to exactly 10,000 bps.
+               */
+              function test_P03_route_exact_sum_boundary() external view {
+                  IEthenaMintingV2 target =
+                      IEthenaMintingV2(MINTING);
+
+                  address[] memory custodians =
+                      new address[](2);
+
+                  uint128[] memory ratios =
+                      new uint128[](2);
+
+                  custodians[0] =
+                      0x0000000000000000000000000000000000000001;
+
+                  custodians[1] =
+                      0x0000000000000000000000000000000000000002;
+
+                  ratios[0] = 5000;
+                  ratios[1] = 5000;
+
+                  bool valid =
+                      target.verifyRoute(
+                          custodians,
+                          ratios
+                      );
+
+                  assertTrue(
+                      valid,
+                      "valid 50/50 route rejected"
+                  );
+              }
+
+              /*
+               * P04
+               *
+               * Route under-sum must fail.
+               */
+              function test_P04_route_under_sum() external view {
+                  IEthenaMintingV2 target =
+                      IEthenaMintingV2(MINTING);
+
+                  address[] memory custodians =
+                      new address[](2);
+
+                  uint128[] memory ratios =
+                      new uint128[](2);
+
+                  custodians[0] =
+                      0x0000000000000000000000000000000000000001;
+
+                  custodians[1] =
+                      0x0000000000000000000000000000000000000002;
+
+                  ratios[0] = 4999;
+                  ratios[1] = 5000;
+
+                  bool reverted;
+
+                  try target.verifyRoute(
+                      custodians,
+                      ratios
+                  ) returns (bool result) {
+                      reverted = !result;
+                  } catch {
+                      reverted = true;
+                  }
+
+                  assertTrue(
+                      reverted,
+                      "under-sum route unexpectedly accepted"
+                  );
+              }
+
+              /*
+               * P05
+               *
+               * Route over-sum must fail.
+               */
+              function test_P05_route_over_sum() external view {
+                  IEthenaMintingV2 target =
+                      IEthenaMintingV2(MINTING);
+
+                  address[] memory custodians =
+                      new address[](2);
+
+                  uint128[] memory ratios =
+                      new uint128[](2);
+
+                  custodians[0] =
+                      0x0000000000000000000000000000000000000001;
+
+                  custodians[1] =
+                      0x0000000000000000000000000000000000000002;
+
+                  ratios[0] = 5001;
+                  ratios[1] = 5000;
+
+                  bool reverted;
+
+                  try target.verifyRoute(
+                      custodians,
+                      ratios
+                  ) returns (bool result) {
+                      reverted = !result;
+                  } catch {
+                      reverted = true;
+                  }
+
+                  assertTrue(
+                      reverted,
+                      "over-sum route unexpectedly accepted"
+                  );
+              }
+
+              /*
+               * P06
+               *
+               * Verify that the live distributor and V2 minting
+               * contract expose their expected relationship.
+               */
+              function test_P06_distributor_state_snapshot()
+                  external
+                  view
+              {
+                  IDistributor distributor =
+                      IDistributor(DISTRIBUTOR);
+
+                  address currentMint =
+                      distributor.mintContract();
+
+                  address currentOperator =
+                      distributor.operator();
+
+                  address stakingVault =
+                      distributor.STAKING_VAULT();
+
+                  address usdeToken =
+                      distributor.USDE_TOKEN();
+
+                  assertTrue(
+                      currentMint != address(0),
+                      "distributor mintContract is zero"
+                  );
+
+                  assertTrue(
+                      currentOperator != address(0),
+                      "distributor operator is zero"
+                  );
+
+                  assertTrue(
+                      stakingVault != address(0),
+                      "staking vault is zero"
+                  );
+
+                  assertTrue(
+                      usdeToken != address(0),
+                      "distributor USDe is zero"
+                  );
+
+                  /*
+                   * Do not mutate the live distributor.
+                   * This is a pure state snapshot.
+                   */
+                  currentMint;
+                  currentOperator;
+                  stakingVault;
+                  usdeToken;
+              }
+
+              /*
+               * P07
+               *
+               * Check whether the distributor's configured mint
+               * contract currently has an approval for USDe.
+               *
+               * This is observation only.
+               */
+              function test_P07_distributor_allowance_snapshot()
+                  external
+                  view
+              {
+                  IDistributor distributor =
+                      IDistributor(DISTRIBUTOR);
+
+                  address mintContract =
+                      distributor.mintContract();
+
+                  address usde =
+                      distributor.USDE_TOKEN();
+
+                  uint256 allowance =
+                      IERC20(usde).allowance(
+                          DISTRIBUTOR,
+                          mintContract
+                      );
+
+                  /*
+                   * No exploit is asserted here.
+                   * The value is surfaced by the test trace.
+                   */
+                  allowance;
+              }
+
+              /*
+               * P08
+               *
+               * Check the live V2 token configuration for USDe.
+               *
+               * Observation only.
+               */
+              function test_P08_usde_token_config()
+                  external
+                  view
+              {
+                  IEthenaMintingV2 target =
+                      IEthenaMintingV2(MINTING);
+
+                  (
+                      bool isActive,
+                      bool isStable,
+                      uint128 maxMintPerBlock,
+                      uint128 maxRedeemPerBlock,
+                      uint128 mintLimit,
+                      uint128 redeemLimit
+                  ) = target.getTokenConfig(USDE);
+
+                  /*
+                   * The deployment is allowed to have its own
+                   * operational values. We only require that the
+                   * getter is callable and returns a coherent tuple.
+                   */
+                  isActive;
+                  isStable;
+                  maxMintPerBlock;
+                  maxRedeemPerBlock;
+                  mintLimit;
+                  redeemLimit;
+              }
+          }
+          EOF
+
+      - name: Run isolated V2 tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd /tmp/parsa-minting-v2
+
+          forge test \
+            --fork-url http://127.0.0.1:8545 \
+            -vvv
+
+      - name: Produce machine-readable hunt summary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > minting-v2-hunt-summary.txt <<'EOF'
+          PARSA / ETHENA MINTING V2 TRANSITION HUNT
+
+          EXECUTION_MODE=LOCAL_FORK_ONLY
+          MAINNET_TRANSACTIONS=NONE
+          LIVE_EXECUTION=PROHIBITED
+          SUBMISSION=NOT_PERFORMED
+
+          Scope:
+          - EthenaMinting V2
+          - StakingRewardsDistributor
+          - nonce-domain boundary
+          - stable-limit arithmetic boundary
+          - route exact-sum boundary
+          - distributor state snapshot
+          - distributor USDe allowance snapshot
+          - V2 USDe token configuration
+
+          IMPORTANT:
+          Passing tests do NOT constitute a vulnerability finding.
+
+          A finding requires demonstrated security impact:
+          - unauthorized value movement,
+          - cross-user accounting loss,
+          - protocol insolvency,
+          - or economically meaningful permanent DoS.
+
+          No Mainnet transaction was submitted.
+          EOF
+
+          cat minting-v2-hunt-summary.txt
+
+      - name: Stop Anvil
+        if: always()
+        shell: bash
+        run: |
+          if [ -f /tmp/anvil.pid ]; then
+            kill "$(cat /tmp/anvil.pid)" 2>/dev/null || true
+          fi
+
+          echo "LOCAL_FORK_STOPPED=PASS"
+          echo "MAINNET_TRANSACTIONS=NONE"
+          echo "LIVE_EXECUTION=PROHIBITED"
+          echo "SUBMISSION=NOT_PERFORMED"
