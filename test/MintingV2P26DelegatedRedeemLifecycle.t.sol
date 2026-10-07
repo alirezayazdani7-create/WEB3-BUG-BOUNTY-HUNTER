@@ -2,13 +2,18 @@
 pragma solidity ^0.8.20;
 
 interface Vm {
-    function addr(uint256 privateKey) external returns (address);
+    function addr(uint256 privateKey)
+        external
+        returns (address);
 
-    function prank(address msgSender) external;
+    function prank(address msgSender)
+        external;
 
-    function startPrank(address msgSender) external;
+    function startPrank(address msgSender)
+        external;
 
-    function stopPrank() external;
+    function stopPrank()
+        external;
 
     function sign(
         uint256 privateKey,
@@ -27,23 +32,11 @@ interface Vm {
         bytes32 value
     )
         external;
-
-    /*
-     * Foundry ERC20 balance manipulation.
-     * Used ONLY on the isolated Anvil fork.
-     */
-    function deal(
-        address token,
-        address to,
-        uint256 give
-    )
-        external;
 }
 
 interface IERC20P26 {
-    function balanceOf(
-        address account
-    )
+
+    function balanceOf(address account)
         external
         view
         returns (uint256);
@@ -54,6 +47,32 @@ interface IERC20P26 {
     )
         external
         returns (bool);
+}
+
+interface IUSDeP26 {
+
+    function balanceOf(address account)
+        external
+        view
+        returns (uint256);
+
+    function approve(
+        address spender,
+        uint256 amount
+    )
+        external
+        returns (bool);
+
+    function mint(
+        address to,
+        uint256 amount
+    )
+        external;
+
+    function minter()
+        external
+        view
+        returns (address);
 }
 
 interface IEthenaP26 {
@@ -128,7 +147,9 @@ interface IEthenaP26 {
     )
         external
         view
-        returns (DelegatedSignerStatus);
+        returns (
+            DelegatedSignerStatus
+        );
 
     function hashOrder(
         Order calldata order
@@ -152,16 +173,27 @@ interface IEthenaP26 {
         external;
 }
 
+
 contract MintingV2P26DelegatedRedeemLifecycleTest {
 
+    /*
+     * Ethena Minting V2
+     */
     address constant MINTING =
         0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3;
 
+    /*
+     * USDe
+     */
     address constant USDE =
         0x4c9EDD5852cd905f086C759E8383e09bff1E68B3;
 
+    /*
+     * USDC
+     */
     address constant USDC =
         0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+
 
     Vm constant vm =
         Vm(
@@ -176,14 +208,23 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
             )
         );
 
-    IEthenaP26 constant target =
-        IEthenaP26(MINTING);
 
-    IERC20P26 constant usde =
-        IERC20P26(USDE);
+    IEthenaP26 constant target =
+        IEthenaP26(
+            MINTING
+        );
+
+
+    IUSDeP26 constant usde =
+        IUSDeP26(
+            USDE
+        );
+
 
     IERC20P26 constant usdc =
-        IERC20P26(USDC);
+        IERC20P26(
+            USDC
+        );
 
 
     function assertTrue(
@@ -227,10 +268,12 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
 
 
     /*
-     * Fund benefactor directly in the isolated
-     * Anvil fork.
+     * Fund the local benefactor using the REAL USDe
+     * minter configured on the fork.
      *
-     * No external holder is required.
+     * This is LOCAL FORK ONLY.
+     *
+     * No Mainnet transaction is sent.
      */
     function _fundBenefactor(
         address benefactor,
@@ -238,23 +281,43 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
     )
         internal
     {
-        vm.deal(
-            USDE,
+        address usdeMinter =
+            usde.minter();
+
+
+        require(
+            usdeMinter != address(0),
+            "USDe minter is zero"
+        );
+
+
+        /*
+         * The fork impersonates the actual USDe minter.
+         */
+        vm.prank(
+            usdeMinter
+        );
+
+
+        usde.mint(
             benefactor,
             amount
         );
+
 
         assertEq(
             usde.balanceOf(
                 benefactor
             ),
             amount,
-            "USDe local funding failed"
+            "USDe local mint failed"
         );
+
 
         vm.startPrank(
             benefactor
         );
+
 
         require(
             usde.approve(
@@ -264,6 +327,7 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
             "USDe approve failed"
         );
 
+
         vm.stopPrank();
     }
 
@@ -271,7 +335,7 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
     /*
      * Fund Minting V2 with USDC.
      *
-     * ONLY modifies the isolated Anvil fork.
+     * This modifies ONLY the isolated Anvil fork.
      */
     function _fundMintingUSDC(
         uint256 amount
@@ -286,11 +350,13 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
                 )
             );
 
+
         vm.store(
             USDC,
             balanceSlot,
             bytes32(amount)
         );
+
 
         assertEq(
             usdc.balanceOf(
@@ -302,6 +368,9 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
     }
 
 
+    /*
+     * Build a valid REDEEM order.
+     */
     function _order(
         address benefactor,
         uint128 nonce
@@ -346,6 +415,10 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
     }
 
 
+    /*
+     * Generate EIP-712 signature using
+     * the delegated signer.
+     */
     function _signature(
         uint256 delegatePrivateKey,
         bytes32 digest
@@ -364,6 +437,7 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
                 delegatePrivateKey,
                 digest
             );
+
 
         signature =
             IEthenaP26.Signature({
@@ -384,23 +458,45 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
      * ============================================================
      * P26 TEST 1
      *
-     * Delegate -> Redeem -> Remove Delegate
+     * Delegated signer
+     * ->
+     * Full redeem
+     * ->
+     * Delegate removal
+     * ->
+     * Old authority invalidated
      * ============================================================
      */
     function test_P26_delegate_can_redeem_then_removal_invalidates_old_authority()
         external
     {
+        /*
+         * Anvil private key #1.
+         */
         address benefactor =
             vm.addr(1);
 
+
+        /*
+         * Anvil private key #2.
+         */
         address delegate =
             vm.addr(2);
+
 
         uint256 usdeAmount =
             1e18;
 
+
         uint256 collateralAmount =
             999900001;
+
+
+        /*
+         * --------------------------------------------------------
+         * SETUP
+         * --------------------------------------------------------
+         */
 
 
         /*
@@ -409,6 +505,7 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
         vm.prank(
             target.owner()
         );
+
 
         target.addWhitelistedBenefactor(
             benefactor
@@ -421,6 +518,7 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
         vm.prank(
             target.owner()
         );
+
 
         target.grantRole(
             _redeemerRole(),
@@ -446,12 +544,17 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
 
 
         /*
+         * --------------------------------------------------------
          * STEP 1
+         *
          * Benefactor initiates delegation.
+         * --------------------------------------------------------
          */
+
         vm.prank(
             benefactor
         );
+
 
         target.setDelegatedSigner(
             delegate
@@ -476,12 +579,17 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
 
 
         /*
+         * --------------------------------------------------------
          * STEP 2
+         *
          * Delegate confirms.
+         * --------------------------------------------------------
          */
+
         vm.prank(
             delegate
         );
+
 
         target.confirmDelegatedSigner(
             benefactor
@@ -506,14 +614,19 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
 
 
         /*
+         * --------------------------------------------------------
          * STEP 3
+         *
          * Delegate signs legitimate REDEEM.
+         * --------------------------------------------------------
          */
+
         IEthenaP26.Order memory order =
             _order(
                 benefactor,
                 26001001
             );
+
 
         IEthenaP26.Signature memory signature =
             _signature(
@@ -538,6 +651,7 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
                 benefactor
             );
 
+
         uint256 usdcBefore =
             usdc.balanceOf(
                 benefactor
@@ -545,12 +659,17 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
 
 
         /*
+         * --------------------------------------------------------
          * STEP 4
+         *
          * Execute full redeem.
+         * --------------------------------------------------------
          */
+
         vm.prank(
             benefactor
         );
+
 
         target.redeem(
             order,
@@ -583,12 +702,17 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
 
 
         /*
+         * --------------------------------------------------------
          * STEP 5
-         * Remove delegate.
+         *
+         * Benefactor removes delegate.
+         * --------------------------------------------------------
          */
+
         vm.prank(
             benefactor
         );
+
 
         target.removeDelegatedSigner(
             delegate
@@ -613,17 +737,24 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
 
 
         /*
+         * --------------------------------------------------------
          * STEP 6
+         *
          * Removed delegate creates a NEW signature
          * for a NEW nonce.
          *
          * Authorization must fail.
+         *
+         * This is deliberately NOT a nonce replay test.
+         * --------------------------------------------------------
          */
+
         IEthenaP26.Order memory staleOrder =
             _order(
                 benefactor,
                 26001002
             );
+
 
         IEthenaP26.Signature memory staleSignature =
             _signature(
@@ -657,7 +788,7 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
      * ============================================================
      * P26 TEST 2
      *
-     * Delegate must be scoped to one benefactor.
+     * Delegated signer must be scoped to ONE benefactor.
      * ============================================================
      */
     function test_P26_delegate_is_scoped_to_one_benefactor()
@@ -666,8 +797,10 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
         address benefactorA =
             vm.addr(3);
 
+
         address benefactorB =
             vm.addr(4);
+
 
         address delegate =
             vm.addr(5);
@@ -679,6 +812,7 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
         vm.prank(
             target.owner()
         );
+
 
         target.addWhitelistedBenefactor(
             benefactorA
@@ -692,17 +826,19 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
             target.owner()
         );
 
+
         target.addWhitelistedBenefactor(
             benefactorB
         );
 
 
         /*
-         * Delegate is authorized only by A.
+         * Delegate is authorized ONLY by A.
          */
         vm.prank(
             benefactorA
         );
+
 
         target.setDelegatedSigner(
             delegate
@@ -710,11 +846,12 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
 
 
         /*
-         * Delegate confirms for A.
+         * Delegate confirms ONLY for A.
          */
         vm.prank(
             delegate
         );
+
 
         target.confirmDelegatedSigner(
             benefactorA
@@ -722,7 +859,7 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
 
 
         /*
-         * Create an order belonging to B.
+         * Create order belonging to B.
          */
         IEthenaP26.Order memory orderB =
             _order(
@@ -732,7 +869,7 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
 
 
         /*
-         * Delegate signs B's order.
+         * Same delegate signs B's order.
          */
         IEthenaP26.Signature memory signatureB =
             _signature(
@@ -744,8 +881,7 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
 
 
         /*
-         * Must fail because delegate belongs
-         * only to A.
+         * Authorization must fail.
          */
         (
             bool authorized,
