@@ -57,7 +57,6 @@ contract MintingV2TransitionTest {
 
     function test_P01_usde_binding()
         external
-        view
     {
         address configured = target.usde();
 
@@ -74,7 +73,6 @@ contract MintingV2TransitionTest {
 
     function test_P02_nonce_collision_property()
         external
-        view
     {
         address sender =
             address(0x1111);
@@ -112,7 +110,6 @@ contract MintingV2TransitionTest {
 
     function test_P03_non_custodian_route_rejected()
         external
-        view
     {
         address[] memory custodians =
             new address[](2);
@@ -144,7 +141,6 @@ contract MintingV2TransitionTest {
 
     function test_P04_empty_route_rejected()
         external
-        view
     {
         address[] memory custodians =
             new address[](0);
@@ -170,7 +166,6 @@ contract MintingV2TransitionTest {
 
     function test_P05_length_mismatch_rejected()
         external
-        view
     {
         address[] memory custodians =
             new address[](2);
@@ -201,7 +196,6 @@ contract MintingV2TransitionTest {
 
     function test_P06_zero_ratio_rejected()
         external
-        view
     {
         address[] memory custodians =
             new address[](2);
