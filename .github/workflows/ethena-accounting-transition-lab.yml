@@ -1,327 +1,511 @@
-ETHENA ACCOUNTING TRANSITION LAB — A04 FORENSIC REPAIR
-
-OBJECTIVE
----------
-Repair ONLY the A04 accounting assertions in:
-
-.github/workflows/ethena-accounting-transition-lab.yml
-
-DO NOT rewrite the workflow.
-DO NOT replace the workflow with this instruction text.
-DO NOT modify unrelated tests.
-DO NOT modify Ethena protocol contracts.
-DO NOT add live transactions.
-DO NOT add private keys.
-DO NOT add external execution.
-DO NOT weaken assertions.
-
-The workflow must remain LOCAL FORK ONLY.
-
-SAFETY REQUIREMENTS
--------------------
-The following conditions MUST remain unchanged:
-
-EXECUTION_MODE=LOCAL_FORK_ONLY
-MAINNET_TRANSACTIONS=NONE
-LIVE_EXECUTION=PROHIBITED
-SUBMISSION=NOT_PERFORMED
-
-The workflow must continue using the local Anvil fork at:
-
-http://127.0.0.1:8545
-
-All transactions must remain local fork transactions only.
-
-FORENSIC ROOT CAUSE
--------------------
-The existing A04 test incorrectly compares:
-
-Vault_before + Silo_before
-
-against:
-
-Vault_after + Silo_after
-
-after unstake.
-
-That is NOT a valid conservation invariant because unstake intentionally transfers
-USDe from the USDeSilo to the external receiver.
-
-The previous Run #7 produced:
-
-A04_PENDING_BEFORE_UNSTAKE
-= 1251811497904328062
-
-A04_RECEIVER_DELTA
-= 1251811497904328062
-
-A04_SILO_OUTFLOW
-= 0
-
-A04_RAW_BACKING_BEFORE
-= 1251113124749443396420042609
-
-A04_RAW_BACKING_AFTER
-= 1251113123497631898515714547
-
-The decrease in measured Vault+Silo backing was:
-
-1251811497904328062
-
-which exactly equals:
-
-A04_PENDING_BEFORE_UNSTAKE
-and
-A04_RECEIVER_DELTA
-
-Therefore the apparent accounting loss was caused by the LAB'S INVALID
-measurement boundary, not evidence of a protocol loss.
-
-CORRECT ACCOUNTING MODEL
-------------------------
-
-During cooldown:
-
-Vault_before
-+
-Silo_before
-=
-Vault_after_cooldown
-+
-Silo_before_unstake
-
-During unstake:
-
-Silo_before_unstake
-=
-Silo_after_unstake
-+
-Receiver_delta
-
-For the entire A04 cycle:
-
-Vault_before
-+
-Silo_before
-=
-Vault_after
-+
-Silo_after
-+
-Receiver_delta
-
-This is the invariant that must be tested.
-
-REQUIRED CODE CHANGE
---------------------
-
-Find the existing A04 section.
-
-After:
-
-P4="$(pending_amount "$HOLDER")"
-
-insert:
-
-Z_BEFORE_UNSTAKE="$(silo_assets)"
-
-Then print:
-
-echo "A04_SILO_BEFORE_UNSTAKE=$Z_BEFORE_UNSTAKE"
-
-The sequence must therefore become approximately:
-
-P4="$(pending_amount "$HOLDER")"
-Z_BEFORE_UNSTAKE="$(silo_assets)"
-
-echo "A04_COOLDOWN_AND_DISABLE=PASS"
-echo "A04_PENDING_BEFORE_UNSTAKE=$P4"
-echo "A04_SILO_BEFORE_UNSTAKE=$Z_BEFORE_UNSTAKE"
-
-Then continue with:
-
-rpc evm_increaseTime 86401
-rpc evm_mine
-
-tx "$HOLDER" "$SUSDE" "unstake(address)" "$RECEIVER"
-
-After unstake, keep:
-
-AFTER_R="$(usde_bal "$RECEIVER")"
-V4="$(vault_usde)"
-Z4="$(silo_assets)"
-E4="$(raw_backing "$V4" "$Z4")"
-
-RECEIVER_DELTA="$(delta "$BEFORE_R" "$AFTER_R")"
-
-Then REPLACE the existing incorrect:
-
-SILO_OUTFLOW="$(python3 -c 'import sys; print(int(sys.argv[1]) - int(sys.argv[2]))' "$Z0" "$Z4")"
-
-with:
-
-SILO_OUTFLOW="$(python3 -c 'import sys; print(int(sys.argv[1]) - int(sys.argv[2]))' "$Z_BEFORE_UNSTAKE" "$Z4")"
-
-IMPORTANT:
-Do NOT use Z0 for SILO_OUTFLOW because Z0 was captured BEFORE cooldown.
-The correct baseline is Z_BEFORE_UNSTAKE.
-
-CORRECT RECEIVER RECONCILIATION
---------------------------------
-
-Keep the existing pending-to-receiver check:
-
-RECEIVER_DELTA == P4
-
-This must remain a hard assertion.
-
-Expected result:
-
-A04_RECEIVER_PENDING_RECONCILIATION=PASS
-
-CORRECT SILO RECONCILIATION
-----------------------------
-
-Replace the old invalid silo comparison with:
-
-if [ "$SILO_OUTFLOW" = "$RECEIVER_DELTA" ]; then
-  echo "A04_SILO_RECEIVER_RECONCILIATION=PASS"
-else
-  echo "A04_SILO_RECEIVER_RECONCILIATION=FAIL"
-fi
-
-Also add:
-
-if [ "$SILO_OUTFLOW" = "$P4" ]; then
-  echo "A04_SILO_PENDING_RECONCILIATION=PASS"
-else
-  echo "A04_SILO_PENDING_RECONCILIATION=FAIL"
-fi
-
-FULL-CYCLE CONSERVATION
------------------------
-
-The old:
-
-A04_RAW_BACKING_CONSERVATION
-
-assertion is semantically incorrect because Receiver is outside the
-Vault+Silo measurement boundary after unstake.
-
-Replace it with a full-cycle conservation assertion.
-
-Calculate:
-
-FULL_CYCLE_AFTER="$(python3 -c 'import sys; print(int(sys.argv[1]) + int(sys.argv[2]))' "$E4" "$RECEIVER_DELTA")"
-
-Then print:
-
-echo "A04_FULL_CYCLE_EXPECTED_BACKING=$E0"
-echo "A04_FULL_CYCLE_RECONCILED=$FULL_CYCLE_AFTER"
-
-Then assert:
-
-if [ "$E0" = "$FULL_CYCLE_AFTER" ]; then
-  echo "A04_FULL_CYCLE_CONSERVATION=PASS"
-else
-  echo "A04_FULL_CYCLE_CONSERVATION=FAIL"
-fi
-
-IMPORTANT NAMING CHANGE
------------------------
-
-Do NOT simply change the expected value of:
-
-A04_RAW_BACKING_CONSERVATION
-
-while keeping its old meaning.
-
-The old assertion was based on an invalid accounting boundary.
-
-Use:
-
-A04_FULL_CYCLE_CONSERVATION
-
-instead.
-
-OPTIONAL ADDITIONAL ASSERTION
-------------------------------
-
-If the workflow already has a check_equal helper, prefer using it.
-
-For example:
-
-check_equal \
-  "A04_FULL_CYCLE_CONSERVATION" \
-  "$E0" \
-  "$FULL_CYCLE_AFTER"
-
-If check_equal is not appropriate for the existing workflow structure,
-use the explicit if/else comparison above.
-
-EXPECTED A04 RESULT
--------------------
-
-After the repair, the expected conceptual result is:
-
-A04_COOLDOWN_AND_DISABLE=PASS
-
-A04_RECEIVER_PENDING_RECONCILIATION=PASS
-
-A04_SILO_RECEIVER_RECONCILIATION=PASS
-
-A04_SILO_PENDING_RECONCILIATION=PASS
-
-A04_FULL_CYCLE_CONSERVATION=PASS
-
-The exact numeric values must be obtained from the actual fork execution.
-DO NOT fabricate values.
-
-VALIDATION REQUIREMENTS
------------------------
-
-Before committing:
-
-1. Confirm the workflow remains valid YAML.
-2. Confirm the file is still approximately the original workflow size.
-3. Confirm the workflow still starts Anvil locally.
-4. Confirm chain ID remains 31337 for local execution.
-5. Confirm no live Ethereum transaction is added.
-6. Confirm no private key or secret is added.
-7. Confirm A01, A02 and A03 are untouched.
-8. Confirm only A04 accounting logic is changed.
-9. Confirm the original invalid Z0-based SILO_OUTFLOW calculation is removed.
-10. Confirm Z_BEFORE_UNSTAKE is captured after cooldown and before unstake.
-11. Confirm the full-cycle invariant includes RECEIVER_DELTA.
-
-DO NOT FABRICATE TEST RESULTS
------------------------------
-
-Do not report PASS unless the GitHub Action actually executes and produces PASS.
-
-Do not create a bounty report from the previous A04 failure.
-
-The previous failure is currently classified as:
-
-LAB MEASUREMENT / INVARIANT ERROR
-
-not:
-
-PROTOCOL ACCOUNTING LOSS
-
-COMMIT MESSAGE
---------------
-
-Use:
-
-fix: correct A04 unstake accounting invariant
-
-FINAL SAFETY MARKERS
---------------------
-
-Keep:
-
-EXECUTION_MODE=LOCAL_FORK_ONLY
-MAINNET_TRANSACTIONS=NONE
-LIVE_EXECUTION=PROHIBITED
-SUBMISSION=NOT_PERFORMED
+name: Ethena Accounting Transition Lab
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  accounting-transition:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Start isolated Mainnet fork
+        env:
+          ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
+        run: |
+          set -euo pipefail
+
+          test -n "$ETH_RPC_URL"
+
+          anvil --fork-url "$ETH_RPC_URL" \
+            --host 127.0.0.1 \
+            --port 8545 \
+            --chain-id 31337 \
+            --accounts 2 > anvil.log 2>&1 &
+
+          echo $! > anvil.pid
+
+          RPC="http://127.0.0.1:8545"
+
+          for i in $(seq 1 30); do
+            cast chain-id --rpc-url "$RPC" >/dev/null 2>&1 && break
+            sleep 1
+          done
+
+          test "$(cast chain-id --rpc-url "$RPC")" = "31337"
+          test "$(cast chain-id --rpc-url "$ETH_RPC_URL")" = "1"
+
+          echo "LOCAL_FORK=PASS"
+          echo "FORK_BLOCK=$(cast block-number --rpc-url "$RPC")"
+
+      - name: Run accounting transition matrix
+        timeout-minutes: 9
+        run: |
+          set -u
+
+          RPC="http://127.0.0.1:8545"
+
+          SUSDE="0x9D39A5DE30e57443BfF2A8307A4256c8797A3497"
+          USDE="0x4c9EDD5852cd905f086C759E8383e09bff1E68B3"
+
+          HOLDER="0xA469b399df1c7b4bd8569048d889f131329dffa1"
+          RECEIVER="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+
+          BLACKLIST_MANAGER="0x3B0AAf6e6fCd4a7cEEf8c92C32DFeA9E64dC1862"
+
+          rpc() {
+            cast rpc "$@" --rpc-url "$RPC"
+          }
+
+          impersonate() {
+            rpc anvil_impersonateAccount "$1" >/dev/null
+            rpc anvil_setBalance "$1" 0x3635C9ADC5DEA0000000000 >/dev/null
+          }
+
+          snap() {
+            rpc evm_snapshot | tr -d '"' | tail -n 1
+          }
+
+          rev() {
+            rpc evm_revert "$1" >/dev/null
+          }
+
+          tx() {
+            local from="$1"
+            local to="$2"
+            local sig="$3"
+
+            shift 3
+
+            timeout 45s cast send \
+              --unlocked \
+              --from "$from" \
+              "$to" \
+              "$sig" \
+              "$@" \
+              --rpc-url "$RPC" \
+              >/tmp/cast.out \
+              2>/tmp/cast.err
+          }
+
+          usde_bal() {
+            cast call \
+              "$USDE" \
+              "balanceOf(address)(uint256)" \
+              "$1" \
+              --rpc-url "$RPC" |
+              awk 'NR==1 {print $1}'
+          }
+
+          susde_bal() {
+            cast call \
+              "$SUSDE" \
+              "balanceOf(address)(uint256)" \
+              "$1" \
+              --rpc-url "$RPC" |
+              awk 'NR==1 {print $1}'
+          }
+
+          silo_addr() {
+            cast call \
+              "$SUSDE" \
+              "silo()(address)" \
+              --rpc-url "$RPC"
+          }
+
+          silo_assets() {
+            usde_bal "$(silo_addr)"
+          }
+
+          vault_usde() {
+            usde_bal "$SUSDE"
+          }
+
+          pending_amount() {
+            cast call \
+              "$SUSDE" \
+              "cooldowns(address)(uint104,uint152)" \
+              "$1" \
+              --rpc-url "$RPC" |
+              awk 'NR==2 {print $1}'
+          }
+
+          pending_end() {
+            cast call \
+              "$SUSDE" \
+              "cooldowns(address)(uint104,uint152)" \
+              "$1" \
+              --rpc-url "$RPC" |
+              awk 'NR==1 {print $1}'
+          }
+
+          raw_backing() {
+            python3 -c 'import sys; print(int(sys.argv[1]) + int(sys.argv[2]))' "$1" "$2"
+          }
+
+          delta() {
+            python3 -c 'import sys; print(int(sys.argv[2]) - int(sys.argv[1]))' "$1" "$2"
+          }
+
+          check_equal() {
+            local label="$1"
+            local before="$2"
+            local after="$3"
+
+            if [ "$before" = "$after" ]; then
+              echo "$label=PASS"
+            else
+              echo "$label=FAIL BEFORE=$before AFTER=$after"
+            fi
+          }
+
+          FULL_ROLE="$(cast keccak "FULL_RESTRICTED_STAKER_ROLE")"
+          BLACKLIST_ROLE="$(cast keccak "BLACKLIST_MANAGER_ROLE")"
+
+          ADMIN="$(
+            cast call \
+              "$SUSDE" \
+              "owner()(address)" \
+              --rpc-url "$RPC" |
+              tr '[:upper:]' '[:lower:]'
+          )"
+
+          impersonate "$HOLDER"
+          impersonate "$RECEIVER"
+          impersonate "$ADMIN"
+          impersonate "$BLACKLIST_MANAGER"
+
+          ADMIN_ROLE="$(
+            cast call \
+              "$SUSDE" \
+              "DEFAULT_ADMIN_ROLE()(bytes32)" \
+              --rpc-url "$RPC"
+          )"
+
+          ADMIN_OK="$(
+            cast call \
+              "$SUSDE" \
+              "hasRole(bytes32,address)(bool)" \
+              "$ADMIN_ROLE" \
+              "$ADMIN" \
+              --rpc-url "$RPC"
+          )"
+
+          MANAGER_OK="$(
+            cast call \
+              "$SUSDE" \
+              "hasRole(bytes32,address)(bool)" \
+              "$BLACKLIST_ROLE" \
+              "$BLACKLIST_MANAGER" \
+              --rpc-url "$RPC"
+          )"
+
+          echo "ADMIN_ROLE_OK=$ADMIN_OK"
+          echo "BLACKLIST_MANAGER_OK=$MANAGER_OK"
+
+          if [ "$ADMIN_OK" != "true" ] || [ "$MANAGER_OK" != "true" ]; then
+            echo "MATRIX_STATUS=INCONCLUSIVE_ROLE_SETUP"
+            exit 0
+          fi
+
+          echo "========================================"
+          echo "ETHENA ACCOUNTING TRANSITION LAB V2"
+          echo "========================================"
+
+          echo "=== A01 cooldown: raw USDe backing reconciliation ==="
+
+          S="$(snap)"
+
+          V0="$(vault_usde)"
+          Z0="$(silo_assets)"
+          E0="$(raw_backing "$V0" "$Z0")"
+
+          echo "A01_VAULT_USDE_BEFORE=$V0"
+          echo "A01_SILO_USDE_BEFORE=$Z0"
+          echo "A01_RAW_BACKING_BEFORE=$E0"
+
+          if tx \
+            "$HOLDER" \
+            "$SUSDE" \
+            "cooldownShares(uint256)" \
+            "1000000000000000000"
+          then
+
+            V1="$(vault_usde)"
+            Z1="$(silo_assets)"
+            E1="$(raw_backing "$V1" "$Z1")"
+
+            P1="$(pending_amount "$HOLDER")"
+            SD1="$(delta "$Z0" "$Z1")"
+
+            echo "A01_VAULT_USDE_AFTER=$V1"
+            echo "A01_SILO_USDE_AFTER=$Z1"
+            echo "A01_RAW_BACKING_AFTER=$E1"
+            echo "A01_PENDING=$P1"
+            echo "A01_SILO_DELTA=$SD1"
+
+            check_equal \
+              "A01_RAW_BACKING_CONSERVATION" \
+              "$E0" \
+              "$E1"
+
+            if [ "$SD1" = "$P1" ]; then
+              echo "A01_SILO_PENDING_RECONCILIATION=PASS"
+            else
+              echo "A01_SILO_PENDING_RECONCILIATION=FAIL"
+            fi
+
+            echo "A01_RESULT=MEASURED"
+
+          else
+            echo "A01_RESULT=INCONCLUSIVE"
+          fi
+
+          rev "$S"
+
+          echo "=== A02 cooldown -> FULL -> redistribute ==="
+
+          S="$(snap)"
+
+          V0="$(vault_usde)"
+          Z0="$(silo_assets)"
+          E0="$(raw_backing "$V0" "$Z0")"
+
+          P0="$(pending_amount "$HOLDER")"
+
+          echo "A02_RAW_BACKING_BEFORE=$E0"
+          echo "A02_PENDING_BEFORE=$P0"
+
+          if \
+            tx \
+              "$HOLDER" \
+              "$SUSDE" \
+              "cooldownShares(uint256)" \
+              "1000000000000000000" &&
+            tx \
+              "$BLACKLIST_MANAGER" \
+              "$SUSDE" \
+              "addToBlacklist(address,bool)" \
+              "$HOLDER" \
+              "true" &&
+            tx \
+              "$ADMIN" \
+              "$SUSDE" \
+              "redistributeLockedAmount(address,address)" \
+              "$HOLDER" \
+              "$RECEIVER"
+          then
+
+            V2="$(vault_usde)"
+            Z2="$(silo_assets)"
+            E2="$(raw_backing "$V2" "$Z2")"
+
+            P2="$(pending_amount "$HOLDER")"
+
+            HOLDER_SHARES="$(susde_bal "$HOLDER")"
+            RECEIVER_SHARES="$(susde_bal "$RECEIVER")"
+
+            echo "A02_VAULT_USDE_AFTER=$V2"
+            echo "A02_SILO_USDE_AFTER=$Z2"
+            echo "A02_RAW_BACKING_AFTER=$E2"
+            echo "A02_PENDING_AFTER=$P2"
+            echo "A02_HOLDER_SHARES=$HOLDER_SHARES"
+            echo "A02_RECEIVER_SHARES=$RECEIVER_SHARES"
+
+            check_equal \
+              "A02_RAW_BACKING_CONSERVATION" \
+              "$E0" \
+              "$E2"
+
+            if [ "$P2" = "$(pending_amount "$HOLDER")" ]; then
+              echo "A02_PENDING_STATE_READ=PASS"
+            else
+              echo "A02_PENDING_STATE_READ=FAIL"
+            fi
+
+            echo "A02_RESULT=MEASURED"
+
+          else
+            echo "A02_RESULT=INCONCLUSIVE"
+          fi
+
+          rev "$S"
+
+          echo "=== A03 two cooldowns -> FULL -> redistribute ==="
+
+          S="$(snap)"
+
+          Z0="$(silo_assets)"
+
+          if \
+            tx \
+              "$HOLDER" \
+              "$SUSDE" \
+              "cooldownShares(uint256)" \
+              "1000000000000000000" &&
+            tx \
+              "$HOLDER" \
+              "$SUSDE" \
+              "cooldownShares(uint256)" \
+              "1000000000000000000"
+          then
+
+            Z3="$(silo_assets)"
+            P3="$(pending_amount "$HOLDER")"
+            SD3="$(delta "$Z0" "$Z3")"
+            END3="$(pending_end "$HOLDER")"
+
+            echo "A03_SILO_USDE_BEFORE=$Z0"
+            echo "A03_SILO_USDE_AFTER=$Z3"
+            echo "A03_PENDING_AFTER_TWO=$P3"
+            echo "A03_SILO_DELTA=$SD3"
+            echo "A03_COOLDOWN_END=$END3"
+
+            if [ "$SD3" = "$P3" ]; then
+              echo "A03_SILO_PENDING_RECONCILIATION=PASS"
+            else
+              echo "A03_SILO_PENDING_RECONCILIATION=FAIL"
+            fi
+
+            if \
+              tx \
+                "$BLACKLIST_MANAGER" \
+                "$SUSDE" \
+                "addToBlacklist(address,bool)" \
+                "$HOLDER" \
+                "true" &&
+              tx \
+                "$ADMIN" \
+                "$SUSDE" \
+                "redistributeLockedAmount(address,address)" \
+                "$HOLDER" \
+                "$RECEIVER"
+            then
+
+              P3_FINAL="$(pending_amount "$HOLDER")"
+
+              echo "A03_RESTRICT_AND_REDISTRIBUTE=PASS"
+              echo "A03_PENDING_FINAL=$P3_FINAL"
+
+              if [ "$P3" = "$P3_FINAL" ]; then
+                echo "A03_PENDING_PRESERVED_AFTER_REDISTRIBUTE=PASS"
+              else
+                echo "A03_PENDING_PRESERVED_AFTER_REDISTRIBUTE=FAIL"
+              fi
+
+              echo "A03_RESULT=MEASURED"
+
+            else
+              echo "A03_RESULT=INCONCLUSIVE"
+            fi
+
+          else
+            echo "A03_RESULT=INCONCLUSIVE"
+          fi
+
+          rev "$S"
+
+          echo "=== A04 cooldown -> duration 0 -> unstake ==="
+
+          S="$(snap)"
+
+          V0="$(vault_usde)"
+          Z0="$(silo_assets)"
+          E0="$(raw_backing "$V0" "$Z0")"
+
+          BEFORE_R="$(usde_bal "$RECEIVER")"
+
+          if \
+            tx \
+              "$HOLDER" \
+              "$SUSDE" \
+              "cooldownShares(uint256)" \
+              "1000000000000000000" &&
+            tx \
+              "$ADMIN" \
+              "$SUSDE" \
+              "setCooldownDuration(uint24)" \
+              "0"
+          then
+
+            P4="$(pending_amount "$HOLDER")"
+
+            echo "A04_COOLDOWN_AND_DISABLE=PASS"
+            echo "A04_PENDING_BEFORE_UNSTAKE=$P4"
+
+            rpc evm_increaseTime 86401 >/dev/null
+            rpc evm_mine >/dev/null
+
+            if \
+              tx \
+                "$HOLDER" \
+                "$SUSDE" \
+                "unstake(address)" \
+                "$RECEIVER"
+            then
+
+              AFTER_R="$(usde_bal "$RECEIVER")"
+
+              V4="$(vault_usde)"
+              Z4="$(silo_assets)"
+              E4="$(raw_backing "$V4" "$Z4")"
+
+              RECEIVER_DELTA="$(delta "$BEFORE_R" "$AFTER_R")"
+              SILO_OUTFLOW="$(python3 -c 'import sys; print(int(sys.argv[1]) - int(sys.argv[2]))' "$Z0" "$Z4")"
+
+              echo "A04_RECEIVER_DELTA=$RECEIVER_DELTA"
+              echo "A04_SILO_OUTFLOW=$SILO_OUTFLOW"
+              echo "A04_RAW_BACKING_BEFORE=$E0"
+              echo "A04_RAW_BACKING_AFTER=$E4"
+
+              check_equal \
+                "A04_RAW_BACKING_CONSERVATION" \
+                "$E0" \
+                "$E4"
+
+              if [ "$RECEIVER_DELTA" = "$P4" ]; then
+                echo "A04_RECEIVER_PENDING_RECONCILIATION=PASS"
+              else
+                echo "A04_RECEIVER_PENDING_RECONCILIATION=FAIL"
+              fi
+
+              if [ "$RECEIVER_DELTA" = "$SILO_OUTFLOW" ]; then
+                echo "A04_SILO_RECEIVER_RECONCILIATION=PASS"
+              else
+                echo "A04_SILO_RECEIVER_RECONCILIATION=FAIL"
+              fi
+
+              echo "A04_RESULT=MEASURED"
+
+            else
+              echo "A04_RESULT=BLOCKED"
+            fi
+
+          else
+            echo "A04_RESULT=INCONCLUSIVE"
+          fi
+
+          rev "$S"
+
+          echo "=== FINAL ==="
+          echo "EXECUTION_MODE=LOCAL_FORK_ONLY"
+          echo "MAINNET_TRANSACTIONS=NONE"
+          echo "LIVE_EXECUTION=PROHIBITED"
+          echo "SUBMISSION=NOT_PERFORMED"
+
+      - name: Stop isolated fork
+        if: always()
+        run: |
+          set +e
+
+          if [ -f anvil.pid ]; then
+            kill "$(cat anvil.pid)" 2>/dev/null || true
+          fi
+
+          echo "LOCAL_FORK_STOPPED=YES"
