@@ -64,9 +64,18 @@ contract MintingV2TransitionTest {
 
     event DeltaLimitObserved(uint128 deltaLimit);
 
+    event RouteResult(
+        string testName,
+        bool callSucceeded,
+        bool accepted
+    );
+
     IEthenaMinting target = IEthenaMinting(MINTING);
 
-    function assertTrue(bool value, string memory reason) internal pure {
+    function assertTrue(bool value, string memory reason)
+        internal
+        pure
+    {
         require(value, reason);
     }
 
@@ -78,7 +87,11 @@ contract MintingV2TransitionTest {
     }
 
     function test_P01_usde_binding() external {
-        assertEq(target.usde(), USDE, "USDe binding mismatch");
+        assertEq(
+            target.usde(),
+            USDE,
+            "USDe binding mismatch"
+        );
     }
 
     function test_P02_nonce_boundary() external {
@@ -88,7 +101,10 @@ contract MintingV2TransitionTest {
             uint128 slotA,
             uint256 invalidatorA,
             uint256 bitA
-        ) = target.verifyNonce(sender, uint128(0x1234));
+        ) = target.verifyNonce(
+            sender,
+            uint128(0x1234)
+        );
 
         (
             uint128 slotB,
@@ -96,11 +112,21 @@ contract MintingV2TransitionTest {
             uint256 bitB
         ) = target.verifyNonce(
             sender,
-            uint128(uint256(0x1234) + (uint256(1) << 64))
+            uint128(
+                uint256(0x1234) + (uint256(1) << 64)
+            )
         );
 
-        assertTrue(slotA == slotB, "expected nonce slot collision not observed");
-        assertTrue(bitA == bitB, "expected nonce bit collision not observed");
+        assertTrue(
+            slotA == slotB,
+            "expected nonce slot collision not observed"
+        );
+
+        assertTrue(
+            bitA == bitB,
+            "expected nonce bit collision not observed"
+        );
+
         assertTrue(
             invalidatorA == invalidatorB,
             "unexpected bitmap state difference"
@@ -123,14 +149,32 @@ contract MintingV2TransitionTest {
                 ratios: ratios
             });
 
-        (bool ok,) = address(target).staticcall(
+        (
+            bool ok,
+            bytes memory data
+        ) = address(target).staticcall(
             abi.encodeWithSelector(
                 IEthenaMinting.verifyRoute.selector,
                 route
             )
         );
 
-        assertTrue(!ok, "non-custodian route accepted");
+        bool accepted = false;
+
+        if (ok && data.length >= 32) {
+            accepted = abi.decode(data, (bool));
+        }
+
+        emit RouteResult(
+            "P03_NON_CUSTODIAN_ROUTE",
+            ok,
+            accepted
+        );
+
+        assertTrue(
+            !accepted,
+            "non-custodian route accepted"
+        );
     }
 
     function test_P04_empty_route_rejected() external {
@@ -143,14 +187,32 @@ contract MintingV2TransitionTest {
                 ratios: ratios
             });
 
-        (bool ok,) = address(target).staticcall(
+        (
+            bool ok,
+            bytes memory data
+        ) = address(target).staticcall(
             abi.encodeWithSelector(
                 IEthenaMinting.verifyRoute.selector,
                 route
             )
         );
 
-        assertTrue(!ok, "empty route accepted");
+        bool accepted = false;
+
+        if (ok && data.length >= 32) {
+            accepted = abi.decode(data, (bool));
+        }
+
+        emit RouteResult(
+            "P04_EMPTY_ROUTE",
+            ok,
+            accepted
+        );
+
+        assertTrue(
+            !accepted,
+            "empty route accepted"
+        );
     }
 
     function test_P05_usdc_configuration() external {
@@ -163,9 +225,20 @@ contract MintingV2TransitionTest {
             uint128 maxRedeem
         ) = target.tokenConfig(USDC);
 
-        assertTrue(active, "USDC configured but inactive");
-        assertTrue(maxMint > 0, "USDC max mint is zero");
-        assertTrue(maxRedeem > 0, "USDC max redeem is zero");
+        assertTrue(
+            active,
+            "USDC configured but inactive"
+        );
+
+        assertTrue(
+            maxMint > 0,
+            "USDC max mint is zero"
+        );
+
+        assertTrue(
+            maxRedeem > 0,
+            "USDC max redeem is zero"
+        );
 
         tokenType;
     }
@@ -180,9 +253,20 @@ contract MintingV2TransitionTest {
             uint128 maxRedeem
         ) = target.tokenConfig(USDT);
 
-        assertTrue(active, "USDT configured but inactive");
-        assertTrue(maxMint > 0, "USDT max mint is zero");
-        assertTrue(maxRedeem > 0, "USDT max redeem is zero");
+        assertTrue(
+            active,
+            "USDT configured but inactive"
+        );
+
+        assertTrue(
+            maxMint > 0,
+            "USDT max mint is zero"
+        );
+
+        assertTrue(
+            maxRedeem > 0,
+            "USDT max redeem is zero"
+        );
 
         tokenType;
     }
@@ -272,7 +356,7 @@ contract MintingV2TransitionTest {
         );
 
         emit BoundaryResult(
-            "P08_USDT_MINUS_1_MINT",
+            "P08_USDT_MINUS_1_USDT",
             oneUSDT - 1,
             oneUSDe,
             0,
@@ -311,7 +395,11 @@ contract MintingV2TransitionTest {
             target.stablesDeltaLimit()
         );
 
-        for (uint256 i = 0; i < deductions.length; i++) {
+        for (
+            uint256 i = 0;
+            i < deductions.length;
+            i++
+        ) {
             uint128 collateral =
                 exactCollateral - deductions[i];
 
@@ -353,7 +441,11 @@ contract MintingV2TransitionTest {
             target.stablesDeltaLimit()
         );
 
-        for (uint256 i = 0; i < deductions.length; i++) {
+        for (
+            uint256 i = 0;
+            i < deductions.length;
+            i++
+        ) {
             uint128 collateral =
                 exactCollateral - deductions[i];
 
