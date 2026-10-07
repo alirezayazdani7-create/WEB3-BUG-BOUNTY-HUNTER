@@ -35,7 +35,6 @@ interface Vm {
 }
 
 interface IERC20P26 {
-
     function balanceOf(address account)
         external
         view
@@ -50,7 +49,6 @@ interface IERC20P26 {
 }
 
 interface IUSDeP26 {
-
     function balanceOf(address account)
         external
         view
@@ -271,9 +269,7 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
      * Fund the local benefactor using the REAL USDe
      * minter configured on the fork.
      *
-     * This is LOCAL FORK ONLY.
-     *
-     * No Mainnet transaction is sent.
+     * LOCAL FORK ONLY.
      */
     function _fundBenefactor(
         address benefactor,
@@ -292,7 +288,8 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
 
 
         /*
-         * The fork impersonates the actual USDe minter.
+         * Impersonate the actual USDe minter
+         * on the isolated Anvil fork.
          */
         vm.prank(
             usdeMinter
@@ -406,8 +403,16 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
                 collateral_asset:
                     USDC,
 
+                /*
+                 * FIX:
+                 * 999900 USDC base units
+                 * = 0.9999 USDC
+                 *
+                 * This keeps the fixture inside
+                 * the production stable-price bounds.
+                 */
                 collateral_amount:
-                    999900001,
+                    999900,
 
                 usde_amount:
                     1e18
@@ -470,16 +475,10 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
     function test_P26_delegate_can_redeem_then_removal_invalidates_old_authority()
         external
     {
-        /*
-         * Anvil private key #1.
-         */
         address benefactor =
             vm.addr(1);
 
 
-        /*
-         * Anvil private key #2.
-         */
         address delegate =
             vm.addr(2);
 
@@ -489,7 +488,7 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
 
 
         uint256 collateralAmount =
-            999900001;
+            999900;
 
 
         /*
@@ -498,10 +497,6 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
          * --------------------------------------------------------
          */
 
-
-        /*
-         * Whitelist benefactor.
-         */
         vm.prank(
             target.owner()
         );
@@ -745,7 +740,7 @@ contract MintingV2P26DelegatedRedeemLifecycleTest {
          *
          * Authorization must fail.
          *
-         * This is deliberately NOT a nonce replay test.
+         * This is NOT a nonce replay test.
          * --------------------------------------------------------
          */
 
