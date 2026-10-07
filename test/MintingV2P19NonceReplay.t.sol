@@ -115,12 +115,6 @@ interface IEthenaMintingP19 {
 }
 
 
-/*
- * Minimal ERC-1271 wallet used only inside the
- * local Anvil fork.
- *
- * It accepts exactly one approved EIP-712 digest.
- */
 contract P19Valid1271Wallet {
 
     bytes4 internal constant MAGICVALUE =
@@ -241,17 +235,12 @@ contract MintingV2P19NonceReplayTest {
         pure
         returns (bytes32)
     {
-        return
-            keccak256(
-                "MINTER_ROLE"
-            );
+        return keccak256(
+            "MINTER_ROLE"
+        );
     }
 
 
-    /*
-     * Add the test ERC-1271 wallet to the
-     * Ethena benefactor whitelist.
-     */
     function _authorize(
         address wallet
     )
@@ -267,12 +256,6 @@ contract MintingV2P19NonceReplayTest {
     }
 
 
-    /*
-     * Fund the local ERC-1271 wallet by directly
-     * writing its USDC balance in the local fork.
-     *
-     * This never touches Mainnet.
-     */
     function _fundAndApprove(
         P19Valid1271Wallet wallet,
         uint256 amount
@@ -312,9 +295,6 @@ contract MintingV2P19NonceReplayTest {
     }
 
 
-    /*
-     * Construct a MINT order.
-     */
     function _order(
         address wallet,
         uint128 nonce,
@@ -342,14 +322,11 @@ contract MintingV2P19NonceReplayTest {
 
                 nonce: nonce,
 
-                benefactor:
-                    wallet,
+                benefactor: wallet,
 
-                beneficiary:
-                    wallet,
+                beneficiary: wallet,
 
-                collateral_asset:
-                    USDC,
+                collateral_asset: USDC,
 
                 collateral_amount:
                     collateral,
@@ -360,10 +337,6 @@ contract MintingV2P19NonceReplayTest {
     }
 
 
-    /*
-     * Valid local route:
-     * 100% to the known Ethena custodian.
-     */
     function _route()
         internal
         pure
@@ -385,21 +358,12 @@ contract MintingV2P19NonceReplayTest {
 
         r =
             IEthenaMintingP19.Route({
-                addresses:
-                    addresses,
-
-                ratios:
-                    ratios
+                addresses: addresses,
+                ratios: ratios
             });
     }
 
 
-    /*
-     * Dummy ERC-1271 signature bytes.
-     *
-     * The local wallet validates by digest, not by
-     * cryptographic signature bytes.
-     */
     function _sig()
         internal
         pure
@@ -418,12 +382,6 @@ contract MintingV2P19NonceReplayTest {
     }
 
 
-    /*
-     * A successful staticcall means the nonce is
-     * currently considered available.
-     *
-     * After consumption, verifyNonce reverts.
-     */
     function _nonceAvailable(
         address sender,
         uint256 nonce
@@ -449,21 +407,17 @@ contract MintingV2P19NonceReplayTest {
 
     /*
      * ============================================================
-     * P19 TEST 1
+     * TEST 1
      * ============================================================
      *
-     * 1. Create valid ERC-1271 wallet.
-     * 2. Whitelist wallet.
-     * 3. Fund wallet.
-     * 4. Create valid order with nonce N.
-     * 5. Approve exact order digest.
-     * 6. Execute valid mint.
-     * 7. Confirm nonce is consumed.
-     * 8. Create DIFFERENT order with SAME nonce N.
-     * 9. Approve NEW valid ERC-1271 digest.
-     * 10. Call mint() directly.
-     * 11. Require InvalidNonce().
-     * 12. Confirm no second collateral transfer.
+     * Valid ERC-1271 mint succeeds.
+     *
+     * The same nonce is then reused with:
+     *
+     * - different order_id
+     * - new valid ERC-1271 digest
+     *
+     * Direct mint() must revert with InvalidNonce().
      */
     function test_P19_same_nonce_cannot_execute_twice()
         external
@@ -475,6 +429,7 @@ contract MintingV2P19NonceReplayTest {
             address(wallet)
         );
 
+
         uint128 nonce =
             19001001;
 
@@ -483,6 +438,7 @@ contract MintingV2P19NonceReplayTest {
 
         uint256 secondCollateral =
             999_900_001;
+
 
         _fundAndApprove(
             wallet,
@@ -513,15 +469,8 @@ contract MintingV2P19NonceReplayTest {
 
 
         /*
-         * Approve exact digest for first order.
+         * Confirm the local MINTER authorization exists.
          */
-        wallet.setApprovedDigest(
-            target.hashOrder(
-                first
-            )
-        );
-
-
         assertTrue(
             target.hasRole(
                 _minterRole(),
@@ -532,19 +481,17 @@ contract MintingV2P19NonceReplayTest {
 
 
         /*
-         * Nonce must initially be available.
+         * Approve exact digest for first order.
          */
-        assertTrue(
-            _nonceAvailable(
-                address(wallet),
-                nonce
-            ),
-            "fresh nonce was not available"
+        wallet.setApprovedDigest(
+            target.hashOrder(
+                first
+            )
         );
 
 
         /*
-         * Baseline verification must succeed.
+         * Baseline authorization.
          */
         target.verifyOrder(
             first,
@@ -553,7 +500,7 @@ contract MintingV2P19NonceReplayTest {
 
 
         /*
-         * Execute first legitimate mint.
+         * FIRST legitimate mint.
          */
         vm.startPrank(
             MINTER
@@ -569,14 +516,14 @@ contract MintingV2P19NonceReplayTest {
 
 
         /*
-         * Successful mint must consume nonce.
+         * Nonce must now be consumed.
          */
         assertTrue(
             !_nonceAvailable(
                 address(wallet),
                 nonce
             ),
-            "nonce remained available after successful mint"
+            "nonce was not consumed after first mint"
         );
 
 
@@ -589,13 +536,16 @@ contract MintingV2P19NonceReplayTest {
         assertEq(
             remainingAfterFirst,
             secondCollateral,
-            "first mint transferred unexpected collateral"
+            "unexpected collateral after first mint"
         );
 
 
         /*
-         * Create a DIFFERENT order with the
-         * SAME nonce.
+         * SECOND order:
+         *
+         * Same nonce.
+         * Different order ID.
+         * New EIP-1271 digest.
          */
         IEthenaMintingP19.Order memory second =
             _order(
@@ -612,11 +562,7 @@ contract MintingV2P19NonceReplayTest {
 
 
         /*
-         * NEW valid ERC-1271 digest.
-         *
-         * This is important:
-         * the replay attempt is not using
-         * the original digest.
+         * New valid ERC-1271 authorization.
          */
         wallet.setApprovedDigest(
             target.hashOrder(
@@ -626,18 +572,17 @@ contract MintingV2P19NonceReplayTest {
 
 
         /*
-         * DO NOT call verifyOrder(second).
+         * IMPORTANT:
          *
-         * verifyOrder itself is expected to reject
-         * the consumed nonce.
+         * We intentionally do NOT call verifyOrder(second).
          *
-         * We want to test the actual mint() path.
+         * That helper is expected to reject a consumed nonce.
+         *
+         * The security property we want is:
+         * direct mint() cannot execute a consumed nonce.
          */
 
 
-        /*
-         * mint() MUST revert with InvalidNonce().
-         */
         vm.expectRevert(
             bytes4(
                 keccak256(
@@ -645,6 +590,7 @@ contract MintingV2P19NonceReplayTest {
                 )
             )
         );
+
 
         vm.startPrank(
             MINTER
@@ -660,10 +606,7 @@ contract MintingV2P19NonceReplayTest {
 
 
         /*
-         * If the expected revert occurred,
-         * execution reaches here.
-         *
-         * Confirm no second collateral transfer.
+         * No second collateral transfer.
          */
         assertEq(
             usdc.balanceOf(
@@ -677,20 +620,15 @@ contract MintingV2P19NonceReplayTest {
 
     /*
      * ============================================================
-     * P19 TEST 2
+     * TEST 2
      * ============================================================
      *
-     * Stronger variant:
+     * Same nonce + NEW valid ERC-1271 digest.
      *
-     * Same nonce
-     * +
-     * different order
-     * +
-     * different USDe amount
-     * +
-     * NEW valid ERC-1271 digest
+     * Also changes usde_amount.
      *
-     * must still fail at mint().
+     * This confirms that changing the signed order does not
+     * bypass nonce consumption.
      */
     function test_P19_same_nonce_with_new_valid_1271_digest_is_rejected()
         external
@@ -702,11 +640,13 @@ contract MintingV2P19NonceReplayTest {
             address(wallet)
         );
 
+
         uint128 nonce =
             19001002;
 
         uint256 collateral =
             999_900_001;
+
 
         _fundAndApprove(
             wallet,
@@ -715,7 +655,7 @@ contract MintingV2P19NonceReplayTest {
 
 
         /*
-         * First order.
+         * FIRST order.
          */
         IEthenaMintingP19.Order memory first =
             _order(
@@ -732,10 +672,10 @@ contract MintingV2P19NonceReplayTest {
 
 
         /*
-         * Second order:
-         * SAME nonce,
-         * DIFFERENT order ID,
-         * DIFFERENT USDe amount.
+         * SECOND order:
+         * same nonce,
+         * different order ID,
+         * different USDe amount.
          */
         IEthenaMintingP19.Order memory second =
             _order(
@@ -759,7 +699,7 @@ contract MintingV2P19NonceReplayTest {
 
 
         /*
-         * First valid ERC-1271 digest.
+         * Approve first digest.
          */
         wallet.setApprovedDigest(
             target.hashOrder(
@@ -769,7 +709,7 @@ contract MintingV2P19NonceReplayTest {
 
 
         /*
-         * Baseline order verification.
+         * Baseline verification.
          */
         target.verifyOrder(
             first,
@@ -778,7 +718,7 @@ contract MintingV2P19NonceReplayTest {
 
 
         /*
-         * First legitimate mint.
+         * FIRST legitimate mint.
          */
         vm.startPrank(
             MINTER
@@ -807,8 +747,8 @@ contract MintingV2P19NonceReplayTest {
 
 
         /*
-         * NEW order + NEW valid ERC-1271 digest,
-         * but SAME already-consumed nonce.
+         * Approve a completely NEW valid digest
+         * for the second order.
          */
         wallet.setApprovedDigest(
             target.hashOrder(
@@ -818,7 +758,7 @@ contract MintingV2P19NonceReplayTest {
 
 
         /*
-         * Confirm nonce is still consumed.
+         * Confirm nonce remains consumed.
          */
         assertTrue(
             !_nonceAvailable(
@@ -830,9 +770,9 @@ contract MintingV2P19NonceReplayTest {
 
 
         /*
-         * Direct mint() replay attempt.
+         * Direct replay attempt.
          *
-         * Expected result:
+         * Expected:
          * InvalidNonce()
          */
         vm.expectRevert(
@@ -842,6 +782,7 @@ contract MintingV2P19NonceReplayTest {
                 )
             )
         );
+
 
         vm.startPrank(
             MINTER
@@ -857,7 +798,7 @@ contract MintingV2P19NonceReplayTest {
 
 
         /*
-         * No second transfer.
+         * No second collateral transfer.
          */
         assertEq(
             usdc.balanceOf(
