@@ -14,8 +14,15 @@ interface IERC20P19 {
 }
 
 interface IEthenaMintingP19 {
-    enum SignatureType { EIP712, EIP1271 }
-    enum OrderType { MINT, REDEEM }
+    enum SignatureType {
+        EIP712,
+        EIP1271
+    }
+
+    enum OrderType {
+        MINT,
+        REDEEM
+    }
 
     struct Order {
         string order_id;
@@ -40,17 +47,34 @@ interface IEthenaMintingP19 {
     }
 
     function owner() external view returns (address);
-    function hasRole(bytes32 role, address account) external view returns (bool);
-    function addWhitelistedBenefactor(address benefactor) external;
-    function hashOrder(Order calldata order) external view returns (bytes32);
+
+    function hasRole(
+        bytes32 role,
+        address account
+    ) external view returns (bool);
+
+    function addWhitelistedBenefactor(
+        address benefactor
+    ) external;
+
+    function hashOrder(
+        Order calldata order
+    ) external view returns (bytes32);
+
     function verifyOrder(
         Order calldata order,
         Signature calldata signature
     ) external view returns (bytes32);
+
     function verifyNonce(
         address sender,
         uint256 nonce
-    ) external view returns (uint256, uint256, uint256);
+    ) external view returns (
+        uint256,
+        uint256,
+        uint256
+    );
+
     function mint(
         Order calldata order,
         Route calldata route,
@@ -59,12 +83,17 @@ interface IEthenaMintingP19 {
 }
 
 contract P19Valid1271Wallet {
-    bytes4 internal constant MAGICVALUE = 0x1626ba7e;
-    bytes4 internal constant FAILVALUE = 0xffffffff;
+    bytes4 internal constant MAGICVALUE =
+        0x1626ba7e;
+
+    bytes4 internal constant FAILVALUE =
+        0xffffffff;
 
     bytes32 public approvedDigest;
 
-    function setApprovedDigest(bytes32 digest) external {
+    function setApprovedDigest(
+        bytes32 digest
+    ) external {
         approvedDigest = digest;
     }
 
@@ -72,8 +101,14 @@ contract P19Valid1271Wallet {
         address target,
         bytes calldata data
     ) external returns (bytes memory) {
-        (bool ok, bytes memory ret) = target.call(data);
-        require(ok, "wallet execute failed");
+        (bool ok, bytes memory ret) =
+            target.call(data);
+
+        require(
+            ok,
+            "wallet execute failed"
+        );
+
         return ret;
     }
 
@@ -81,7 +116,10 @@ contract P19Valid1271Wallet {
         bytes32 hash,
         bytes calldata
     ) external view returns (bytes4) {
-        return hash == approvedDigest ? MAGICVALUE : FAILVALUE;
+        return
+            hash == approvedDigest
+                ? MAGICVALUE
+                : FAILVALUE;
     }
 }
 
@@ -99,9 +137,17 @@ contract MintingV2P19NonceReplayTest {
         0x8f0eE0393Eae7fc1638BD7860a3FEc6a663786AE;
 
     Vm constant vm =
-        Vm(address(uint160(uint256(
-            keccak256("hevm cheat code")
-        ))));
+        Vm(
+            address(
+                uint160(
+                    uint256(
+                        keccak256(
+                            "hevm cheat code"
+                        )
+                    )
+                )
+            )
+        );
 
     IEthenaMintingP19 constant target =
         IEthenaMintingP19(MINTING);
@@ -113,7 +159,10 @@ contract MintingV2P19NonceReplayTest {
         bool value,
         string memory reason
     ) internal pure {
-        require(value, reason);
+        require(
+            value,
+            reason
+        );
     }
 
     function assertEq(
@@ -121,7 +170,10 @@ contract MintingV2P19NonceReplayTest {
         uint256 b,
         string memory reason
     ) internal pure {
-        require(a == b, reason);
+        require(
+            a == b,
+            reason
+        );
     }
 
     function _minterRole()
@@ -129,14 +181,21 @@ contract MintingV2P19NonceReplayTest {
         pure
         returns (bytes32)
     {
-        return keccak256("MINTER_ROLE");
+        return keccak256(
+            "MINTER_ROLE"
+        );
     }
 
     function _authorize(
         address wallet
     ) internal {
-        vm.prank(target.owner());
-        target.addWhitelistedBenefactor(wallet);
+        vm.prank(
+            target.owner()
+        );
+
+        target.addWhitelistedBenefactor(
+            wallet
+        );
     }
 
     function _fundAndApprove(
@@ -158,7 +217,9 @@ contract MintingV2P19NonceReplayTest {
         );
 
         assertEq(
-            usdc.balanceOf(address(wallet)),
+            usdc.balanceOf(
+                address(wallet)
+            ),
             amount,
             "wallet funding failed"
         );
@@ -186,19 +247,22 @@ contract MintingV2P19NonceReplayTest {
             IEthenaMintingP19.Order memory o
         )
     {
-        o = IEthenaMintingP19.Order({
-            order_id: orderId,
-            order_type:
-                IEthenaMintingP19.OrderType.MINT,
-            expiry:
-                uint120(block.timestamp + 1 days),
-            nonce: nonce,
-            benefactor: wallet,
-            beneficiary: wallet,
-            collateral_asset: USDC,
-            collateral_amount: collateral,
-            usde_amount: usdeAmount
-        });
+        o =
+            IEthenaMintingP19.Order({
+                order_id: orderId,
+                order_type:
+                    IEthenaMintingP19.OrderType.MINT,
+                expiry:
+                    uint120(
+                        block.timestamp + 1 days
+                    ),
+                nonce: nonce,
+                benefactor: wallet,
+                beneficiary: wallet,
+                collateral_asset: USDC,
+                collateral_amount: collateral,
+                usde_amount: usdeAmount
+            });
     }
 
     function _route()
@@ -214,13 +278,17 @@ contract MintingV2P19NonceReplayTest {
         uint128[] memory ratios =
             new uint128[](1);
 
-        addresses[0] = CUSTODIAN;
-        ratios[0] = 10_000;
+        addresses[0] =
+            CUSTODIAN;
 
-        r = IEthenaMintingP19.Route({
-            addresses: addresses,
-            ratios: ratios
-        });
+        ratios[0] =
+            10_000;
+
+        r =
+            IEthenaMintingP19.Route({
+                addresses: addresses,
+                ratios: ratios
+            });
     }
 
     function _sig()
@@ -230,19 +298,22 @@ contract MintingV2P19NonceReplayTest {
             IEthenaMintingP19.Signature memory s
         )
     {
-        s = IEthenaMintingP19.Signature({
-            signature_type:
-                IEthenaMintingP19.SignatureType.EIP1271,
-            signature_bytes:
-                hex"5031392d5245504c4159"
-        });
+        s =
+            IEthenaMintingP19.Signature({
+                signature_type:
+                    IEthenaMintingP19.SignatureType.EIP1271,
+                signature_bytes:
+                    hex"5031392d5245504c4159"
+            });
     }
 
     function _nonceAvailable(
         address sender,
         uint256 nonce
     ) internal view returns (bool) {
-        (bool ok,) =
+        (
+            bool ok,
+        ) =
             MINTING.staticcall(
                 abi.encodeWithSelector(
                     target.verifyNonce.selector,
@@ -254,15 +325,33 @@ contract MintingV2P19NonceReplayTest {
         return ok;
     }
 
+    /*
+     * P19 TEST 1
+     *
+     * Execute one valid ERC-1271 mint.
+     * Confirm nonce becomes consumed.
+     * Then create a NEW valid ERC-1271 digest
+     * for a different order using the SAME nonce.
+     *
+     * IMPORTANT:
+     * We intentionally DO NOT call verifyOrder()
+     * for the second order because that would reject
+     * the consumed nonce before mint() is reached.
+     *
+     * The replay attempt goes directly through mint().
+     */
     function test_P19_same_nonce_cannot_execute_twice()
         external
     {
         P19Valid1271Wallet wallet =
             new P19Valid1271Wallet();
 
-        _authorize(address(wallet));
+        _authorize(
+            address(wallet)
+        );
 
-        uint128 nonce = 19001001;
+        uint128 nonce =
+            19001001;
 
         uint256 firstCollateral =
             999_900_001;
@@ -272,7 +361,8 @@ contract MintingV2P19NonceReplayTest {
 
         _fundAndApprove(
             wallet,
-            firstCollateral + secondCollateral
+            firstCollateral +
+            secondCollateral
         );
 
         IEthenaMintingP19.Order memory first =
@@ -290,6 +380,10 @@ contract MintingV2P19NonceReplayTest {
         IEthenaMintingP19.Signature memory sig =
             _sig();
 
+        /*
+         * Approve the exact EIP-1271 digest
+         * for the first order.
+         */
         wallet.setApprovedDigest(
             target.hashOrder(first)
         );
@@ -302,6 +396,9 @@ contract MintingV2P19NonceReplayTest {
             "MINTER_ROLE missing"
         );
 
+        /*
+         * Fresh nonce must be available.
+         */
         assertTrue(
             _nonceAvailable(
                 address(wallet),
@@ -310,12 +407,20 @@ contract MintingV2P19NonceReplayTest {
             "fresh nonce was not available"
         );
 
+        /*
+         * Baseline authorization must succeed.
+         */
         target.verifyOrder(
             first,
             sig
         );
 
-        vm.startPrank(MINTER);
+        /*
+         * Execute first valid mint.
+         */
+        vm.startPrank(
+            MINTER
+        );
 
         target.mint(
             first,
@@ -325,6 +430,9 @@ contract MintingV2P19NonceReplayTest {
 
         vm.stopPrank();
 
+        /*
+         * Nonce must now be consumed.
+         */
         assertTrue(
             !_nonceAvailable(
                 address(wallet),
@@ -334,7 +442,9 @@ contract MintingV2P19NonceReplayTest {
         );
 
         uint256 remainingAfterFirst =
-            usdc.balanceOf(address(wallet));
+            usdc.balanceOf(
+                address(wallet)
+            );
 
         assertEq(
             remainingAfterFirst,
@@ -342,6 +452,10 @@ contract MintingV2P19NonceReplayTest {
             "first mint transferred unexpected collateral"
         );
 
+        /*
+         * Construct a DIFFERENT order
+         * with the SAME nonce.
+         */
         IEthenaMintingP19.Order memory second =
             _order(
                 address(wallet),
@@ -351,16 +465,26 @@ contract MintingV2P19NonceReplayTest {
                 uint128(1_000e18)
             );
 
+        /*
+         * Give the ERC-1271 wallet a NEW valid digest.
+         *
+         * This proves that the replay attempt is not
+         * relying on an invalid signature.
+         */
         wallet.setApprovedDigest(
             target.hashOrder(second)
         );
 
-        target.verifyOrder(
-            second,
-            sig
+        /*
+         * DO NOT call verifyOrder(second, sig).
+         *
+         * We want to reach mint() directly and test
+         * whether consumed nonce protection holds
+         * inside the execution path.
+         */
+        vm.startPrank(
+            MINTER
         );
-
-        vm.startPrank(MINTER);
 
         (bool ok,) =
             MINTING.call(
@@ -374,27 +498,46 @@ contract MintingV2P19NonceReplayTest {
 
         vm.stopPrank();
 
+        /*
+         * Replay MUST fail.
+         */
         assertTrue(
             !ok,
             "same nonce was replayed successfully"
         );
 
+        /*
+         * Replay MUST NOT transfer collateral.
+         */
         assertEq(
-            usdc.balanceOf(address(wallet)),
+            usdc.balanceOf(
+                address(wallet)
+            ),
             remainingAfterFirst,
             "replay changed collateral balance"
         );
     }
 
+    /*
+     * P19 TEST 2
+     *
+     * Same nonce + completely new valid ERC-1271 digest.
+     *
+     * This isolates nonce replay protection from
+     * signature digest reuse.
+     */
     function test_P19_same_nonce_with_new_valid_1271_digest_is_rejected()
         external
     {
         P19Valid1271Wallet wallet =
             new P19Valid1271Wallet();
 
-        _authorize(address(wallet));
+        _authorize(
+            address(wallet)
+        );
 
-        uint128 nonce = 19001002;
+        uint128 nonce =
+            19001002;
 
         uint256 collateral =
             999_900_001;
@@ -428,6 +571,9 @@ contract MintingV2P19NonceReplayTest {
         IEthenaMintingP19.Signature memory sig =
             _sig();
 
+        /*
+         * First valid ERC-1271 authorization.
+         */
         wallet.setApprovedDigest(
             target.hashOrder(first)
         );
@@ -437,7 +583,12 @@ contract MintingV2P19NonceReplayTest {
             sig
         );
 
-        vm.startPrank(MINTER);
+        /*
+         * First mint.
+         */
+        vm.startPrank(
+            MINTER
+        );
 
         target.mint(
             first,
@@ -448,7 +599,9 @@ contract MintingV2P19NonceReplayTest {
         vm.stopPrank();
 
         uint256 remaining =
-            usdc.balanceOf(address(wallet));
+            usdc.balanceOf(
+                address(wallet)
+            );
 
         assertEq(
             remaining,
@@ -456,15 +609,18 @@ contract MintingV2P19NonceReplayTest {
             "baseline mint balance mismatch"
         );
 
+        /*
+         * NEW order + NEW valid ERC-1271 digest,
+         * but SAME consumed nonce.
+         */
         wallet.setApprovedDigest(
             target.hashOrder(second)
         );
 
-        target.verifyOrder(
-            second,
-            sig
-        );
-
+        /*
+         * Deliberately skip verifyOrder(second).
+         * Go directly into mint().
+         */
         assertTrue(
             !_nonceAvailable(
                 address(wallet),
@@ -473,7 +629,9 @@ contract MintingV2P19NonceReplayTest {
             "consumed nonce became available again"
         );
 
-        vm.startPrank(MINTER);
+        vm.startPrank(
+            MINTER
+        );
 
         (bool ok,) =
             MINTING.call(
@@ -487,13 +645,22 @@ contract MintingV2P19NonceReplayTest {
 
         vm.stopPrank();
 
+        /*
+         * New valid signature MUST NOT bypass
+         * consumed nonce protection.
+         */
         assertTrue(
             !ok,
             "new valid ERC1271 digest bypassed consumed nonce"
         );
 
+        /*
+         * No second collateral transfer.
+         */
         assertEq(
-            usdc.balanceOf(address(wallet)),
+            usdc.balanceOf(
+                address(wallet)
+            ),
             remaining,
             "same-nonce second order changed collateral"
         );
