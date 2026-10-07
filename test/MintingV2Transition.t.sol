@@ -59,6 +59,17 @@ contract MintingV2TransitionTest {
     address constant USDT =
         0xdAC17F958D2ee523a2206206994597C13D831ec7;
 
+    event BoundaryResult(
+        string testName,
+        uint128 collateralAmount,
+        uint128 usdeAmount,
+        bool accepted
+    );
+
+    event DeltaLimitObserved(
+        uint128 deltaLimit
+    );
+
     IEthenaMinting target =
         IEthenaMinting(MINTING);
 
@@ -80,8 +91,7 @@ contract MintingV2TransitionTest {
     /*
      * P01
      *
-     * Confirm that the deployed Ethena Minting V2 contract
-     * is bound to the expected USDe token.
+     * Confirm USDe binding.
      */
     function test_P01_usde_binding()
         external
@@ -96,18 +106,9 @@ contract MintingV2TransitionTest {
     /*
      * P02
      *
-     * Measure the nonce bitmap collision caused by the
-     * uint64 truncation in invalidatorSlot.
+     * Measure nonce bitmap collision.
      *
-     * This test is observation-only.
-     *
-     * nonce A:
-     *     0x1234
-     *
-     * nonce B:
-     *     0x1234 + 2^64
-     *
-     * They should map to the same bitmap slot and bit.
+     * This is observation-only.
      */
     function test_P02_nonce_boundary()
         external
@@ -155,7 +156,7 @@ contract MintingV2TransitionTest {
     /*
      * P03
      *
-     * An arbitrary non-custodian route must be rejected.
+     * Invalid custodian route must be rejected.
      */
     function test_P03_non_custodian_route_rejected()
         external
@@ -219,7 +220,7 @@ contract MintingV2TransitionTest {
     /*
      * P05
      *
-     * Inspect the current USDC configuration.
+     * Inspect USDC configuration.
      */
     function test_P05_usdc_configuration()
         external
@@ -259,7 +260,7 @@ contract MintingV2TransitionTest {
     /*
      * P06
      *
-     * Inspect the current USDT configuration.
+     * Inspect USDT configuration.
      */
     function test_P06_usdt_configuration()
         external
@@ -299,24 +300,18 @@ contract MintingV2TransitionTest {
     /*
      * P07
      *
-     * USDC has 6 decimals.
-     * USDe has 18 decimals.
+     * USDC:
      *
-     * Exact parity:
-     *
+     * Exact:
      * 1,000,000 USDC units
-     * =
      * 1 USDe
      *
-     * Then test a one-unit collateral shortfall:
-     *
+     * Boundary:
      * 999,999 USDC units
-     * versus
      * 1 USDe
      *
-     * The shortfall result is deliberately NOT asserted.
-     *
-     * We want to observe the real contract behavior first.
+     * IMPORTANT:
+     * Both results are printed as events.
      */
     function test_P07_usdc_one_unit_boundary()
         external
@@ -334,6 +329,10 @@ contract MintingV2TransitionTest {
         uint128 deltaLimit =
             target.stablesDeltaLimit();
 
+        emit DeltaLimitObserved(
+            deltaLimit
+        );
+
         bool exact =
             target.verifyStablesLimit(
                 oneUSDC,
@@ -350,25 +349,30 @@ contract MintingV2TransitionTest {
                 0
             );
 
-        /*
-         * Exact parity should be accepted.
-         */
+        emit BoundaryResult(
+            "P07_EXACT",
+            oneUSDC,
+            oneUSDe,
+            exact
+        );
+
+        emit BoundaryResult(
+            "P07_MINUS_1_USDC",
+            oneUSDC - 1,
+            oneUSDe,
+            oneUnitShort
+        );
+
         assertTrue(
             exact,
             "exact USDC/USDe parity rejected"
         );
-
-        /*
-         * Observation only.
-         */
-        deltaLimit;
-        oneUnitShort;
     }
 
     /*
      * P08
      *
-     * Same one-unit boundary test for USDT.
+     * Same boundary test for USDT.
      */
     function test_P08_usdt_one_unit_boundary()
         external
@@ -382,6 +386,13 @@ contract MintingV2TransitionTest {
 
         uint128 oneUSDe =
             1e18;
+
+        uint128 deltaLimit =
+            target.stablesDeltaLimit();
+
+        emit DeltaLimitObserved(
+            deltaLimit
+        );
 
         bool exact =
             target.verifyStablesLimit(
@@ -399,32 +410,39 @@ contract MintingV2TransitionTest {
                 0
             );
 
-        /*
-         * Exact parity should be accepted.
-         */
+        emit BoundaryResult(
+            "P08_EXACT",
+            oneUSDT,
+            oneUSDe,
+            exact
+        );
+
+        emit BoundaryResult(
+            "P08_MINUS_1_USDT",
+            oneUSDT - 1,
+            oneUSDe,
+            oneUnitShort
+        );
+
         assertTrue(
             exact,
             "exact USDT/USDe parity rejected"
         );
-
-        /*
-         * Observation only.
-         */
-        oneUnitShort;
     }
 
     /*
      * P09
      *
-     * Read the current stablecoin price delta limit.
+     * Observe the current stablesDeltaLimit.
      */
     function test_P09_stables_delta_limit()
         external
-        view
     {
         uint128 limit =
             target.stablesDeltaLimit();
 
-        limit;
+        emit DeltaLimitObserved(
+            limit
+        );
     }
 }
