@@ -570,9 +570,20 @@ jobs:
             echo "A05_HOLDER_SHARES_AFTER_REDISTRIBUTE=$A05_HOLDER_SHARES"
             echo "A05_RECEIVER_SHARES_AFTER_REDISTRIBUTE=$A05_RECEIVER_SHARES_AFTER_REDISTRIBUTE"
 
-            if [ "$A05_PENDING" -gt 0 ] && \
+            A05_PENDING_POSITIVE="$(
+              python3 -c 'import sys; print("true" if int(sys.argv[1]) > 0 else "false")' \
+              "$A05_PENDING"
+            )"
+
+            A05_RECEIVER_SHARE_INCREASE="$(
+              python3 -c 'import sys; print("true" if int(sys.argv[2]) > int(sys.argv[1]) else "false")' \
+              "$A05_RECEIVER_SHARES_BEFORE" \
+              "$A05_RECEIVER_SHARES_AFTER_REDISTRIBUTE"
+            )"
+
+            if [ "$A05_PENDING_POSITIVE" = "true" ] && \
                [ "$A05_HOLDER_SHARES" = "0" ] && \
-               [ "$A05_RECEIVER_SHARES_AFTER_REDISTRIBUTE" -gt "$A05_RECEIVER_SHARES_BEFORE" ]; then
+               [ "$A05_RECEIVER_SHARE_INCREASE" = "true" ]; then
 
               echo "A05_STATE_PRECONDITION=PASS"
 
@@ -585,7 +596,6 @@ jobs:
               then
 
                 echo "A05_SET_COOLDOWN_ZERO=PASS"
-
                 echo "A05_ORIGINAL_PENDING_UNSTAKE=START"
 
                 if \
@@ -599,9 +609,16 @@ jobs:
                   A05_PENDING_AFTER="$(pending_amount "$HOLDER")"
                   A05_RECEIVER_USDE_AFTER_UNSTAKE="$(usde_bal "$RECEIVER")"
 
+                  A05_UNSTAKE_OUT="$(
+                    python3 -c \
+                      'import sys; print(int(sys.argv[2])-int(sys.argv[1]))' \
+                      "$A05_RECEIVER_USDE_BEFORE" \
+                      "$A05_RECEIVER_USDE_AFTER_UNSTAKE"
+                  )"
+
                   echo "A05_ORIGINAL_PENDING_UNSTAKE=PASS"
                   echo "A05_PENDING_AFTER_UNSTAKE=$A05_PENDING_AFTER"
-                  echo "A05_RECEIVER_USDE_AFTER_UNSTAKE=$A05_RECEIVER_USDE_AFTER_UNSTAKE"
+                  echo "A05_UNSTAKE_OUT=$A05_UNSTAKE_OUT"
 
                   A05_RECEIVER_SHARES_AFTER_UNSTAKE="$(susde_bal "$RECEIVER")"
 
@@ -616,7 +633,13 @@ jobs:
 
                   echo "A05_RECEIVER_SHARE_DELTA=$A05_RECEIVER_SHARE_DELTA"
 
-                  if [ "$A05_RECEIVER_SHARE_DELTA" -gt 0 ]; then
+                  A05_RECEIVER_SHARE_POSITIVE="$(
+                    python3 -c \
+                      'import sys; print("true" if int(sys.argv[1]) > 0 else "false")' \
+                      "$A05_RECEIVER_SHARE_DELTA"
+                  )"
+
+                  if [ "$A05_RECEIVER_SHARE_POSITIVE" = "true" ]; then
 
                     echo "A05_RECEIVER_REDEEM=START"
 
@@ -635,6 +658,13 @@ jobs:
                       A05_Z1="$(silo_assets)"
                       A05_E1="$(raw_backing "$A05_V1" "$A05_Z1")"
 
+                      A05_REDEEM_OUT="$(
+                        python3 -c \
+                          'import sys; print(int(sys.argv[2])-int(sys.argv[1]))' \
+                          "$A05_RECEIVER_USDE_AFTER_UNSTAKE" \
+                          "$A05_RECEIVER_USDE_FINAL"
+                      )"
+
                       A05_RECEIVER_TOTAL_OUT="$(
                         python3 -c \
                           'import sys; print(int(sys.argv[2])-int(sys.argv[1]))' \
@@ -642,15 +672,29 @@ jobs:
                           "$A05_RECEIVER_USDE_FINAL"
                       )"
 
+                      A05_RECONCILED_BACKING="$(
+                        python3 -c \
+                          'import sys; print("true" if int(sys.argv[1]) == int(sys.argv[2]) + int(sys.argv[3]) else "false")' \
+                          "$A05_E0" \
+                          "$A05_E1" \
+                          "$A05_RECEIVER_TOTAL_OUT"
+                      )"
+
                       echo "A05_RECEIVER_REDEEM=PASS"
                       echo "A05_RECEIVER_USDE_FINAL=$A05_RECEIVER_USDE_FINAL"
+                      echo "A05_UNSTAKE_OUT=$A05_UNSTAKE_OUT"
+                      echo "A05_REDEEM_OUT=$A05_REDEEM_OUT"
                       echo "A05_RECEIVER_TOTAL_OUT=$A05_RECEIVER_TOTAL_OUT"
                       echo "A05_RAW_BACKING_AFTER=$A05_E1"
+                      echo "A05_RECONCILED_BACKING=$A05_RECONCILED_BACKING"
 
-                      check_equal \
-                        "A05_RAW_BACKING_CONSERVATION" \
-                        "$A05_E0" \
-                        "$A05_E1"
+                      if [ "$A05_RECONCILED_BACKING" = "true" ]; then
+                        echo "A05_RAW_BACKING_CONSERVATION=PASS"
+                        echo "A05_ACCOUNTING_STATUS=CONSERVATION_OK"
+                      else
+                        echo "A05_RAW_BACKING_CONSERVATION=FAIL"
+                        echo "A05_ACCOUNTING_STATUS=CONSERVATION_BROKEN"
+                      fi
 
                       if [ "$A05_PENDING_AFTER" = "0" ]; then
                         echo "A05_PENDING_CLEARED=PASS"
@@ -658,55 +702,37 @@ jobs:
                         echo "A05_PENDING_CLEARED=FAIL"
                       fi
 
-                      if [ "$A05_E0" = "$A05_E1" ]; then
-                        echo "A05_ACCOUNTING_STATUS=CONSERVATION_OK"
-                      else
-                        echo "A05_ACCOUNTING_STATUS=CONSERVATION_BROKEN"
-                      fi
-
                       echo "A05_RESULT=MEASURED"
 
                     else
-
                       echo "A05_RECEIVER_REDEEM=BLOCKED"
                       echo "A05_RESULT=PARTIAL"
-
                     fi
 
                   else
-
                     echo "A05_RECEIVER_SHARE_DELTA=0"
                     echo "A05_RECEIVER_REDEEM=SKIPPED"
                     echo "A05_RESULT=INCONCLUSIVE"
-
                   fi
 
                 else
-
                   echo "A05_ORIGINAL_PENDING_UNSTAKE=BLOCKED"
                   echo "A05_RESULT=BLOCKED"
-
                 fi
 
               else
-
                 echo "A05_SET_COOLDOWN_ZERO=FAIL"
                 echo "A05_RESULT=INCONCLUSIVE"
-
               fi
 
             else
-
               echo "A05_STATE_PRECONDITION=FAIL"
               echo "A05_RESULT=INCONCLUSIVE"
-
             fi
 
           else
-
             echo "A05_SETUP=FAIL"
             echo "A05_RESULT=INCONCLUSIVE"
-
           fi
 
           rev "$S"
@@ -727,3 +753,4 @@ jobs:
           fi
 
           echo "LOCAL_FORK_STOPPED=YES"
+        
