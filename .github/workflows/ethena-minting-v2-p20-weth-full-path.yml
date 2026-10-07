@@ -18,6 +18,10 @@ jobs:
       SUBMISSION: NOT_PERFORMED
       MAINNET_RPC_URL: "https://ethereum-rpc.publicnode.com"
       MINTING: "0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3"
+      WETH: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+      CUSTODIAN_1: "0x8f0eE0393Eae7fc1638BD7860a3FEc6a663786AE"
+      CUSTODIAN_2: "0x12FDB344e4D195fF6613D0f742a6E38344c8b455"
+      CUSTODIAN_3: "0x32b24247cbcE7c17b0017A2159a9FA481f401b16"
 
     steps:
       - name: Checkout repository
@@ -115,6 +119,115 @@ jobs:
           echo "MINTER_ROLE_GRANTED=${HAS_ROLE}"
 
           test "${HAS_ROLE}" = "true"
+
+      - name: Diagnose P20 WETH execution prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RPC="http://127.0.0.1:8545"
+
+          echo "=============================================="
+          echo "P20 WETH EXECUTION DIAGNOSTICS"
+          echo "=============================================="
+
+          echo
+          echo "[1] WETH support"
+          WETH_SUPPORTED="$(
+            cast call \
+              "${MINTING}" \
+              "isSupportedAsset(address)(bool)" \
+              "${WETH}" \
+              --rpc-url "${RPC}"
+          )"
+
+          echo "WETH_SUPPORTED=${WETH_SUPPORTED}"
+
+          echo
+          echo "[2] WETH token configuration"
+          WETH_CONFIG="$(
+            cast call \
+              "${MINTING}" \
+              "tokenConfig(address)(uint8,bool,uint128,uint128)" \
+              "${WETH}" \
+              --rpc-url "${RPC}"
+          )"
+
+          echo "WETH_TOKEN_CONFIG=${WETH_CONFIG}"
+
+          echo
+          echo "[3] Global configuration"
+          GLOBAL_CONFIG="$(
+            cast call \
+              "${MINTING}" \
+              "globalConfig()(uint128,uint128)" \
+              --rpc-url "${RPC}"
+          )"
+
+          echo "GLOBAL_CONFIG=${GLOBAL_CONFIG}"
+
+          echo
+          echo "[4] Official custodian route validation"
+
+          for CUSTODIAN in \
+            "${CUSTODIAN_1}" \
+            "${CUSTODIAN_2}" \
+            "${CUSTODIAN_3}"
+          do
+            echo
+            echo "CUSTODIAN=${CUSTODIAN}"
+
+            CODE="$(
+              cast code \
+                "${CUSTODIAN}" \
+                --rpc-url "${RPC}"
+            )"
+
+            echo "CODE_LENGTH_BYTES=$(
+              printf "%s" "${CODE}" | wc -c
+            )"
+
+            set +e
+
+            ETH_RESULT="$(
+              cast call \
+                "${CUSTODIAN}" \
+                --value 1 \
+                --rpc-url "${RPC}" \
+                2>&1
+            )"
+
+            ETH_STATUS=$?
+
+            set -e
+
+            echo "NATIVE_ETH_CALL_STATUS=${ETH_STATUS}"
+            echo "NATIVE_ETH_CALL_RESULT=${ETH_RESULT}"
+
+            set +e
+
+            ROUTE_RESULT="$(
+              cast call \
+                "${MINTING}" \
+                "verifyRoute((address[],uint128[]))(bool)" \
+                "[${CUSTODIAN}]" \
+                "[10000]" \
+                --rpc-url "${RPC}" \
+                2>&1
+            )"
+
+            ROUTE_STATUS=$?
+
+            set -e
+
+            echo "ROUTE_STATUS=${ROUTE_STATUS}"
+            echo "ROUTE_RESULT=${ROUTE_RESULT}"
+          done
+
+          echo
+          echo "=============================================="
+          echo "DIAGNOSTIC COMPLETE"
+          echo "=============================================="
 
       - name: Run P20 WETH full-path tests
         shell: bash
