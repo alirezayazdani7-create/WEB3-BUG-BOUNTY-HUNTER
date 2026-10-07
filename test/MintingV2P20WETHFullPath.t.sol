@@ -250,8 +250,14 @@ contract MintingV2P20WETHFullPathTest {
     address constant MINTER =
         0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf;
 
+    /*
+     * ETH-compatible V2 custodian.
+     *
+     * mintWETH() unwraps WETH and sends native ETH
+     * to the route destination.
+     */
     address constant CUSTODIAN =
-        0x8f0eE0393Eae7fc1638BD7860a3FEc6a663786AE;
+        0x12FDB344e4D195fF6613D0f742a6E38344c8b455;
 
     address constant USDC =
         0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
@@ -788,10 +794,6 @@ contract MintingV2P20WETHFullPathTest {
 
         /*
          * Full-path call must fail.
-         *
-         * We intentionally do not depend on the exact
-         * custom-error selector here; the security property
-         * is that mintWETH() cannot process a non-WETH asset.
          */
         vm.startPrank(
             MINTER
