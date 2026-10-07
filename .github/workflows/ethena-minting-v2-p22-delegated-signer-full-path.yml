@@ -68,6 +68,69 @@ jobs:
 
           test "${CHAIN_ID}" = "31337"
 
+          echo "ANVIL_READY=PASS"
+
+      - name: Configure local minter authorization
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RPC="http://127.0.0.1:8545"
+
+          echo "=============================================="
+          echo "LOCAL FORK AUTHORIZATION"
+          echo "=============================================="
+
+          OWNER="$(
+            cast call \
+              "${MINTING}" \
+              "owner()(address)" \
+              --rpc-url "${RPC}"
+          )"
+
+          echo "OWNER=${OWNER}"
+
+          cast rpc \
+            --rpc-url "${RPC}" \
+            anvil_impersonateAccount \
+            "${OWNER}"
+
+          cast rpc \
+            --rpc-url "${RPC}" \
+            anvil_setBalance \
+            "${OWNER}" \
+            "0x3635C9ADC5DEA000000"
+
+          MINTER_ROLE="$(
+            cast keccak "MINTER_ROLE"
+          )"
+
+          echo "MINTER_ROLE=${MINTER_ROLE}"
+
+          cast send \
+            --unlocked \
+            --from "${OWNER}" \
+            "${MINTING}" \
+            "grantRole(bytes32,address)" \
+            "${MINTER_ROLE}" \
+            "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf" \
+            --rpc-url "${RPC}"
+
+          HAS_ROLE="$(
+            cast call \
+              "${MINTING}" \
+              "hasRole(bytes32,address)(bool)" \
+              "${MINTER_ROLE}" \
+              "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf" \
+              --rpc-url "${RPC}"
+          )"
+
+          echo "MINTER_ROLE_GRANTED=${HAS_ROLE}"
+
+          test "${HAS_ROLE}" = "true"
+
+          echo "LOCAL_AUTHORIZATION=PASS"
+
       - name: Run P22 delegated signer full path tests
         shell: bash
         run: |
