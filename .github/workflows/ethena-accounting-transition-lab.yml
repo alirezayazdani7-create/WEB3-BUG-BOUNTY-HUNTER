@@ -1,134 +1,327 @@
 ETHENA ACCOUNTING TRANSITION LAB — A04 FORENSIC REPAIR
 
-Run #7 completed successfully at the GitHub Actions level, but accounting validation produced a real failure in scenario A04.
+OBJECTIVE
+---------
+Repair ONLY the A04 accounting assertions in:
 
-IMPORTANT SAFETY CONSTRAINTS:
-- LOCAL FORK / OFFLINE VALIDATION ONLY.
-- DO NOT interact with Ethereum Mainnet.
-- DO NOT submit transactions.
-- DO NOT add private keys, wallets, secrets, RPC credentials, or live execution.
-- Keep LIVE_EXECUTION=PROHIBITED.
-- Keep MAINNET_TRANSACTIONS=NONE.
-- Keep SUBMISSION=NOT_PERFORMED.
-- Do not weaken or remove existing accounting assertions just to make the test pass.
-- Do not fabricate balances or expected values.
-
-TARGET:
 .github/workflows/ethena-accounting-transition-lab.yml
 
-RUN #7 OBSERVATION:
+DO NOT rewrite the workflow.
+DO NOT replace the workflow with this instruction text.
+DO NOT modify unrelated tests.
+DO NOT modify Ethena protocol contracts.
+DO NOT add live transactions.
+DO NOT add private keys.
+DO NOT add external execution.
+DO NOT weaken assertions.
 
-A01:
-A01_RAW_BACKING_CONSERVATION=PASS
-A01_SILO_PENDING_RECONCILIATION=PASS
-A01_RESULT=MEASURED
+The workflow must remain LOCAL FORK ONLY.
 
-A02:
-A02_RAW_BACKING_CONSERVATION=PASS
-A02_PENDING_STATE_READ=PASS
-A02_RESULT=MEASURED
+SAFETY REQUIREMENTS
+-------------------
+The following conditions MUST remain unchanged:
 
-A03:
-A03_SILO_DELTAS_RECONCILIATION=PASS
-A03_RESTRICT_AND_REDISTRIBUTE=PASS
-A03_PENDING_RESERVED_AFTER_REDISTRIBUTE=PASS
-A03_RESULT=MEASURED
+EXECUTION_MODE=LOCAL_FORK_ONLY
+MAINNET_TRANSACTIONS=NONE
+LIVE_EXECUTION=PROHIBITED
+SUBMISSION=NOT_PERFORMED
 
-A04:
-A04_COOLDOWN_AND_DISABLE=PASS
-A04_SILO_OUTFLOW=0
-A04_RAW_BACKING_CONSERVATION=FAIL
+The workflow must continue using the local Anvil fork at:
+
+http://127.0.0.1:8545
+
+All transactions must remain local fork transactions only.
+
+FORENSIC ROOT CAUSE
+-------------------
+The existing A04 test incorrectly compares:
+
+Vault_before + Silo_before
+
+against:
+
+Vault_after + Silo_after
+
+after unstake.
+
+That is NOT a valid conservation invariant because unstake intentionally transfers
+USDe from the USDeSilo to the external receiver.
+
+The previous Run #7 produced:
+
+A04_PENDING_BEFORE_UNSTAKE
+= 1251811497904328062
+
+A04_RECEIVER_DELTA
+= 1251811497904328062
+
+A04_SILO_OUTFLOW
+= 0
+
+A04_RAW_BACKING_BEFORE
+= 1251113124749443396420042609
+
+A04_RAW_BACKING_AFTER
+= 1251113123497631898515714547
+
+The decrease in measured Vault+Silo backing was:
+
+1251811497904328062
+
+which exactly equals:
+
+A04_PENDING_BEFORE_UNSTAKE
+and
+A04_RECEIVER_DELTA
+
+Therefore the apparent accounting loss was caused by the LAB'S INVALID
+measurement boundary, not evidence of a protocol loss.
+
+CORRECT ACCOUNTING MODEL
+------------------------
+
+During cooldown:
+
+Vault_before
++
+Silo_before
+=
+Vault_after_cooldown
++
+Silo_before_unstake
+
+During unstake:
+
+Silo_before_unstake
+=
+Silo_after_unstake
++
+Receiver_delta
+
+For the entire A04 cycle:
+
+Vault_before
++
+Silo_before
+=
+Vault_after
++
+Silo_after
++
+Receiver_delta
+
+This is the invariant that must be tested.
+
+REQUIRED CODE CHANGE
+--------------------
+
+Find the existing A04 section.
+
+After:
+
+P4="$(pending_amount "$HOLDER")"
+
+insert:
+
+Z_BEFORE_UNSTAKE="$(silo_assets)"
+
+Then print:
+
+echo "A04_SILO_BEFORE_UNSTAKE=$Z_BEFORE_UNSTAKE"
+
+The sequence must therefore become approximately:
+
+P4="$(pending_amount "$HOLDER")"
+Z_BEFORE_UNSTAKE="$(silo_assets)"
+
+echo "A04_COOLDOWN_AND_DISABLE=PASS"
+echo "A04_PENDING_BEFORE_UNSTAKE=$P4"
+echo "A04_SILO_BEFORE_UNSTAKE=$Z_BEFORE_UNSTAKE"
+
+Then continue with:
+
+rpc evm_increaseTime 86401
+rpc evm_mine
+
+tx "$HOLDER" "$SUSDE" "unstake(address)" "$RECEIVER"
+
+After unstake, keep:
+
+AFTER_R="$(usde_bal "$RECEIVER")"
+V4="$(vault_usde)"
+Z4="$(silo_assets)"
+E4="$(raw_backing "$V4" "$Z4")"
+
+RECEIVER_DELTA="$(delta "$BEFORE_R" "$AFTER_R")"
+
+Then REPLACE the existing incorrect:
+
+SILO_OUTFLOW="$(python3 -c 'import sys; print(int(sys.argv[1]) - int(sys.argv[2]))' "$Z0" "$Z4")"
+
+with:
+
+SILO_OUTFLOW="$(python3 -c 'import sys; print(int(sys.argv[1]) - int(sys.argv[2]))' "$Z_BEFORE_UNSTAKE" "$Z4")"
+
+IMPORTANT:
+Do NOT use Z0 for SILO_OUTFLOW because Z0 was captured BEFORE cooldown.
+The correct baseline is Z_BEFORE_UNSTAKE.
+
+CORRECT RECEIVER RECONCILIATION
+--------------------------------
+
+Keep the existing pending-to-receiver check:
+
+RECEIVER_DELTA == P4
+
+This must remain a hard assertion.
+
+Expected result:
+
 A04_RECEIVER_PENDING_RECONCILIATION=PASS
-A04_SILO_RECEIVER_RECONCILIATION=FAIL
-A04_RESULT=MEASURED
 
-Observed raw backing values:
+CORRECT SILO RECONCILIATION
+----------------------------
 
-A04_RAW_BACKING_BEFORE_UNSTAKE=
-1251113124749443396420042609
+Replace the old invalid silo comparison with:
 
-A04_RAW_BACKING_AFTER_UNSTAKE=
-1251113123497631898515714547
+if [ "$SILO_OUTFLOW" = "$RECEIVER_DELTA" ]; then
+  echo "A04_SILO_RECEIVER_RECONCILIATION=PASS"
+else
+  echo "A04_SILO_RECEIVER_RECONCILIATION=FAIL"
+fi
 
-Therefore calculate the exact delta independently and preserve the full integer precision.
+Also add:
 
-TASK:
+if [ "$SILO_OUTFLOW" = "$P4" ]; then
+  echo "A04_SILO_PENDING_RECONCILIATION=PASS"
+else
+  echo "A04_SILO_PENDING_RECONCILIATION=FAIL"
+fi
 
-1. Locate the exact implementation of A04:
-   cooldown -> duration 0 -> unstake.
+FULL-CYCLE CONSERVATION
+-----------------------
 
-2. Trace every accounting variable involved in:
-   - raw backing before unstake
-   - pending receiver amount
-   - silo outflow
-   - unstake amount
-   - receiver accounting
-   - raw backing after unstake
+The old:
 
-3. Determine the exact mathematical reason for the conservation failure.
+A04_RAW_BACKING_CONSERVATION
 
-4. Specifically investigate:
-   - integer division / rounding
-   - share-to-asset conversion
-   - decimal scaling
-   - unit mismatch
-   - truncation
-   - duplicated subtraction
-   - missing addition
-   - pending-vs-final balance transition
-   - receiver accounting versus silo accounting
-   - whether duration=0 follows a different accounting path from normal cooldown
+assertion is semantically incorrect because Receiver is outside the
+Vault+Silo measurement boundary after unstake.
 
-5. DO NOT simply change the expected value to match the observed value.
+Replace it with a full-cycle conservation assertion.
 
-6. DO NOT delete or weaken A04_RAW_BACKING_CONSERVATION.
+Calculate:
 
-7. Add a deterministic regression test that reproduces the exact failure.
+FULL_CYCLE_AFTER="$(python3 -c 'import sys; print(int(sys.argv[1]) + int(sys.argv[2]))' "$E4" "$RECEIVER_DELTA")"
 
-8. Fix the accounting logic at the source if and only if the evidence proves the implementation is wrong.
+Then print:
 
-9. Re-run the complete accounting transition matrix after the fix.
+echo "A04_FULL_CYCLE_EXPECTED_BACKING=$E0"
+echo "A04_FULL_CYCLE_RECONCILED=$FULL_CYCLE_AFTER"
 
-10. Report:
+Then assert:
 
-   - root cause
-   - affected accounting variable(s)
-   - exact before value
-   - exact after value
-   - exact delta
-   - whether the delta is rounding, scaling, or an actual accounting loss
-   - code path responsible
-   - files changed
-   - regression test added
-   - A01 result
-   - A02 result
-   - A03 result
-   - A04 result
-   - final conservation result
+if [ "$E0" = "$FULL_CYCLE_AFTER" ]; then
+  echo "A04_FULL_CYCLE_CONSERVATION=PASS"
+else
+  echo "A04_FULL_CYCLE_CONSERVATION=FAIL"
+fi
 
-ACCEPTANCE CRITERIA:
+IMPORTANT NAMING CHANGE
+-----------------------
 
-A01 = PASS
-A02 = PASS
-A03 = PASS
-A04 = PASS
+Do NOT simply change the expected value of:
 
-AND:
+A04_RAW_BACKING_CONSERVATION
 
-RAW_BACKING_CONSERVATION = PASS
+while keeping its old meaning.
 
-AND:
+The old assertion was based on an invalid accounting boundary.
 
-SILO_RECEIVER_RECONCILIATION = PASS
+Use:
 
-AND:
+A04_FULL_CYCLE_CONSERVATION
 
-No live transaction or Mainnet interaction is introduced.
+instead.
 
-If the evidence shows that the A04 failure is caused by an intentional protocol-level rounding rule rather than an implementation bug, DO NOT hide the discrepancy. Document it precisely and classify it as:
+OPTIONAL ADDITIONAL ASSERTION
+------------------------------
 
-EXPECTED_ROUNDING
+If the workflow already has a check_equal helper, prefer using it.
 
-instead of forcing PASS.
+For example:
 
-The objective is forensic correctness, not a green CI result.
+check_equal \
+  "A04_FULL_CYCLE_CONSERVATION" \
+  "$E0" \
+  "$FULL_CYCLE_AFTER"
+
+If check_equal is not appropriate for the existing workflow structure,
+use the explicit if/else comparison above.
+
+EXPECTED A04 RESULT
+-------------------
+
+After the repair, the expected conceptual result is:
+
+A04_COOLDOWN_AND_DISABLE=PASS
+
+A04_RECEIVER_PENDING_RECONCILIATION=PASS
+
+A04_SILO_RECEIVER_RECONCILIATION=PASS
+
+A04_SILO_PENDING_RECONCILIATION=PASS
+
+A04_FULL_CYCLE_CONSERVATION=PASS
+
+The exact numeric values must be obtained from the actual fork execution.
+DO NOT fabricate values.
+
+VALIDATION REQUIREMENTS
+-----------------------
+
+Before committing:
+
+1. Confirm the workflow remains valid YAML.
+2. Confirm the file is still approximately the original workflow size.
+3. Confirm the workflow still starts Anvil locally.
+4. Confirm chain ID remains 31337 for local execution.
+5. Confirm no live Ethereum transaction is added.
+6. Confirm no private key or secret is added.
+7. Confirm A01, A02 and A03 are untouched.
+8. Confirm only A04 accounting logic is changed.
+9. Confirm the original invalid Z0-based SILO_OUTFLOW calculation is removed.
+10. Confirm Z_BEFORE_UNSTAKE is captured after cooldown and before unstake.
+11. Confirm the full-cycle invariant includes RECEIVER_DELTA.
+
+DO NOT FABRICATE TEST RESULTS
+-----------------------------
+
+Do not report PASS unless the GitHub Action actually executes and produces PASS.
+
+Do not create a bounty report from the previous A04 failure.
+
+The previous failure is currently classified as:
+
+LAB MEASUREMENT / INVARIANT ERROR
+
+not:
+
+PROTOCOL ACCOUNTING LOSS
+
+COMMIT MESSAGE
+--------------
+
+Use:
+
+fix: correct A04 unstake accounting invariant
+
+FINAL SAFETY MARKERS
+--------------------
+
+Keep:
+
+EXECUTION_MODE=LOCAL_FORK_ONLY
+MAINNET_TRANSACTIONS=NONE
+LIVE_EXECUTION=PROHIBITED
+SUBMISSION=NOT_PERFORMED
