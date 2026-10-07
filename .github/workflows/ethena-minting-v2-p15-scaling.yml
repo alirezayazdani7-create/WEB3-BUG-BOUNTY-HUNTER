@@ -1,3 +1,187 @@
+name: Ethena Minting V2 P15 Economic Scaling
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  p15-scaling:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      EXECUTION_MODE: LOCAL_FORK_ONLY
+      MAINNET_TRANSACTIONS: "NONE"
+      LIVE_EXECUTION: PROHIBITED
+      SUBMISSION: NOT_PERFORMED
+
+      MAINNET_RPC_URL: "https://ethereum-rpc.publicnode.com"
+
+      MINTING: "0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3"
+      USDE: "0x4c9EDD5852cd905f086C759E8383e09bff1E68B3"
+      USDC: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+
+      LOCAL_TESTER: "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Start isolated Anvil fork
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=============================================="
+          echo "ETHENA MINTING V2 P15"
+          echo "=============================================="
+
+          echo "EXECUTION_MODE=${EXECUTION_MODE}"
+          echo "MAINNET_TRANSACTIONS=${MAINNET_TRANSACTIONS}"
+          echo "LIVE_EXECUTION=${LIVE_EXECUTION}"
+          echo "SUBMISSION=${SUBMISSION}"
+
+          anvil \
+            --fork-url "${MAINNET_RPC_URL}" \
+            --chain-id 31337 \
+            --host 127.0.0.1 \
+            --port 8545 \
+            --auto-impersonate \
+            > /tmp/anvil.log 2>&1 &
+
+          for i in $(seq 1 30); do
+            if cast chain-id \
+              --rpc-url http://127.0.0.1:8545 \
+              >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          CHAIN_ID="$(
+            cast chain-id \
+              --rpc-url http://127.0.0.1:8545
+          )"
+
+          echo "LOCAL_CHAIN_ID=${CHAIN_ID}"
+
+          test "${CHAIN_ID}" = "31337"
+
+          echo "ANVIL_READY=PASS"
+
+      - name: Configure only the local fork
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RPC="http://127.0.0.1:8545"
+
+          OWNER="$(
+            cast call \
+              "${MINTING}" \
+              "owner()(address)" \
+              --rpc-url "${RPC}"
+          )"
+
+          echo "OWNER=${OWNER}"
+
+          cast rpc \
+            --rpc-url "${RPC}" \
+            anvil_impersonateAccount \
+            "${OWNER}"
+
+          cast rpc \
+            --rpc-url "${RPC}" \
+            anvil_setBalance \
+            "${OWNER}" \
+            "0x3635C9ADC5DEA0000000"
+
+          MINTER_ROLE="$(
+            cast keccak "MINTER_ROLE"
+          )"
+
+          cast send \
+            --unlocked \
+            --from "${OWNER}" \
+            "${MINTING}" \
+            "grantRole(bytes32,address)" \
+            "${MINTER_ROLE}" \
+            "${LOCAL_TESTER}" \
+            --rpc-url "${RPC}"
+
+          cast send \
+            --unlocked \
+            --from "${OWNER}" \
+            "${MINTING}" \
+            "addWhitelistedBenefactor(address)" \
+            "${LOCAL_TESTER}" \
+            --rpc-url "${RPC}"
+
+          HAS_ROLE="$(
+            cast call \
+              "${MINTING}" \
+              "hasRole(bytes32,address)(bool)" \
+              "${MINTER_ROLE}" \
+              "${LOCAL_TESTER}" \
+              --rpc-url "${RPC}"
+          )"
+
+          test "${HAS_ROLE}" = "true"
+
+          WHITELISTED="$(
+            cast call \
+              "${MINTING}" \
+              "isWhitelistedBenefactor(address)(bool)" \
+              "${LOCAL_TESTER}" \
+              --rpc-url "${RPC}"
+          )"
+
+          test "${WHITELISTED}" = "true"
+
+          echo "LOCAL_AUTHORIZATION=PASS"
+
+      - name: Inspect P15 economic boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RPC="http://127.0.0.1:8545"
+
+          echo "=============================================="
+          echo "P15 ECONOMIC SCALING"
+          echo "=============================================="
+
+          echo ""
+          echo "stablesDeltaLimit:"
+
+          cast call \
+            "${MINTING}" \
+            "stablesDeltaLimit()(uint128)" \
+            --rpc-url "${RPC}"
+
+          echo ""
+          echo "USDC token config:"
+
+          cast call \
+            "${MINTING}" \
+            "tokenConfig(address)" \
+            "${USDC}" \
+            --rpc-url "${RPC}"
+
+          echo ""
+          echo "Global config:"
+
+          cast call \
+            "${MINTING}" \
+            "globalConfig()" \
+            --rpc-url "${RPC}"
+
       - name: Run P15 scaling tests
         shell: bash
         run: |
@@ -19,3 +203,28 @@
             --fork-url http://127.0.0.1:8545 \
             --match-path test/MintingV2P15Scaling.t.sol \
             -vvvvv
+
+      - name: Final safety assertion
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test "${EXECUTION_MODE}" = "LOCAL_FORK_ONLY"
+          test "${MAINNET_TRANSACTIONS}" = "NONE"
+          test "${LIVE_EXECUTION}" = "PROHIBITED"
+          test "${SUBMISSION}" = "NOT_PERFORMED"
+
+          echo ""
+          echo "=============================================="
+          echo "SAFETY_STATUS=PASS"
+          echo "=============================================="
+
+      - name: Dump Anvil log on failure
+        if: failure()
+        shell: bash
+        run: |
+          echo "=============================================="
+          echo "ANVIL LOG"
+          echo "=============================================="
+
+          cat /tmp/anvil.log || true
