@@ -100,6 +100,7 @@ jobs:
 
           echo ""
           echo "USDe:"
+
           cast call \
             "${MINTING}" \
             "usde()(address)" \
@@ -120,7 +121,7 @@ jobs:
           test -n "${OWNER}"
 
           echo ""
-          echo "Owner balance:"
+          echo "Owner ETH balance before local funding:"
 
           cast balance \
             "${OWNER}" \
@@ -140,16 +141,36 @@ jobs:
               --rpc-url "${RPC}"
           )"
 
-          echo "Using deployed owner:"
-          echo "${OWNER}"
+          echo "=============================================="
+          echo "LOCAL FORK AUTHORIZATION"
+          echo "=============================================="
 
           echo ""
-          echo "Impersonating owner on LOCAL FORK only..."
+          echo "OWNER=${OWNER}"
+
+          echo ""
+          echo "Impersonating owner on LOCAL FORK ONLY..."
 
           cast rpc \
             --rpc-url "${RPC}" \
             anvil_impersonateAccount \
             "${OWNER}"
+
+          echo ""
+          echo "Funding OWNER with local test ETH..."
+
+          cast rpc \
+            --rpc-url "${RPC}" \
+            anvil_setBalance \
+            "${OWNER}" \
+            "0x3635C9ADC5DEA0000000"
+
+          echo ""
+          echo "Owner local ETH balance:"
+
+          cast balance \
+            "${OWNER}" \
+            --rpc-url "${RPC}"
 
           MINTER_ROLE="$(
             cast keccak "MINTER_ROLE"
