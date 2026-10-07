@@ -1,0 +1,126 @@
+name: Ethena Minting V2 P16 Signature Binding
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  p16-binding:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      EXECUTION_MODE: LOCAL_FORK_ONLY
+      MAINNET_TRANSACTIONS: "NONE"
+      LIVE_EXECUTION: PROHIBITED
+      SUBMISSION: NOT_PERFORMED
+      MAINNET_RPC_URL: "https://ethereum-rpc.publicnode.com"
+      MINTING: "0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3"
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Start isolated Anvil fork
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "EXECUTION_MODE=${EXECUTION_MODE}"
+          echo "MAINNET_TRANSACTIONS=${MAINNET_TRANSACTIONS}"
+          echo "LIVE_EXECUTION=${LIVE_EXECUTION}"
+          echo "SUBMISSION=${SUBMISSION}"
+
+          anvil \
+            --fork-url "${MAINNET_RPC_URL}" \
+            --chain-id 31337 \
+            --host 127.0.0.1 \
+            --port 8545 \
+            --auto-impersonate \
+            > /tmp/anvil.log 2>&1 &
+
+          for i in $(seq 1 30); do
+            if cast chain-id \
+              --rpc-url http://127.0.0.1:8545 \
+              >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          CHAIN_ID="$(
+            cast chain-id \
+              --rpc-url http://127.0.0.1:8545
+          )"
+
+          echo "LOCAL_CHAIN_ID=${CHAIN_ID}"
+
+          test "${CHAIN_ID}" = "31337"
+
+      - name: Inspect deployed P16 target
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RPC="http://127.0.0.1:8545"
+
+          echo "=============================================="
+          echo "P16 SIGNATURE BINDING"
+          echo "=============================================="
+
+          echo "Minting owner:"
+
+          cast call \
+            "${MINTING}" \
+            "owner()(address)" \
+            --rpc-url "${RPC}"
+
+          echo "stablesDeltaLimit:"
+
+          cast call \
+            "${MINTING}" \
+            "stablesDeltaLimit()(uint128)" \
+            --rpc-url "${RPC}"
+
+      - name: Run P16 binding tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "RUNNING P16"
+          echo "FORK=http://127.0.0.1:8545"
+          echo "CHAIN_ID=$(cast chain-id --rpc-url http://127.0.0.1:8545)"
+          echo "MAINNET_TRANSACTIONS=NONE"
+          echo "LIVE_EXECUTION=PROHIBITED"
+          echo "SUBMISSION=NOT_PERFORMED"
+
+          forge test \
+            --via-ir \
+            --optimize \
+            --fork-url http://127.0.0.1:8545 \
+            --match-path test/MintingV2P16SignatureBinding.t.sol \
+            -vvvv
+
+      - name: Final safety assertion
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test "${EXECUTION_MODE}" = "LOCAL_FORK_ONLY"
+          test "${MAINNET_TRANSACTIONS}" = "NONE"
+          test "${LIVE_EXECUTION}" = "PROHIBITED"
+          test "${SUBMISSION}" = "NOT_PERFORMED"
+
+          echo "SAFETY_STATUS=PASS"
+
+      - name: Dump Anvil log on failure
+        if: failure()
+        shell: bash
+        run: |
+          cat /tmp/anvil.log || true
