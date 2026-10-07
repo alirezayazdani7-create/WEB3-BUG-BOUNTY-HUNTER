@@ -4,6 +4,10 @@ pragma solidity ^0.8.20;
 interface Vm {
     function prank(address msgSender) external;
 
+    function startPrank(address msgSender) external;
+
+    function stopPrank() external;
+
     function store(
         address target,
         bytes32 slot,
@@ -63,6 +67,14 @@ interface IEthenaMintingP18 {
         external
         view
         returns (address);
+
+    function hasRole(
+        bytes32 role,
+        address account
+    )
+        external
+        view
+        returns (bool);
 
     function addWhitelistedBenefactor(
         address benefactor
@@ -218,6 +230,27 @@ contract MintingV2P18ERC1271FullPathTest {
         require(
             a == b,
             reason
+        );
+    }
+
+    function _minterRole()
+        internal
+        pure
+        returns (bytes32)
+    {
+        return keccak256("MINTER_ROLE");
+    }
+
+    function _assertMinterAuthorized()
+        internal
+        view
+    {
+        assertTrue(
+            target.hasRole(
+                _minterRole(),
+                MINTER
+            ),
+            "local MINTER_ROLE was not granted"
         );
     }
 
@@ -421,7 +454,9 @@ contract MintingV2P18ERC1271FullPathTest {
             sig
         );
 
-        vm.prank(
+        _assertMinterAuthorized();
+
+        vm.startPrank(
             MINTER
         );
 
@@ -430,6 +465,8 @@ contract MintingV2P18ERC1271FullPathTest {
             route,
             sig
         );
+
+        vm.stopPrank();
 
         assertEq(
             usdc.balanceOf(
@@ -485,6 +522,12 @@ contract MintingV2P18ERC1271FullPathTest {
             "malicious route unexpectedly passed route guard"
         );
 
+        _assertMinterAuthorized();
+
+        vm.startPrank(
+            MINTER
+        );
+
         (bool ok,) =
             MINTING.call(
                 abi.encodeWithSelector(
@@ -494,6 +537,8 @@ contract MintingV2P18ERC1271FullPathTest {
                     sig
                 )
             );
+
+        vm.stopPrank();
 
         assertTrue(
             !ok,
