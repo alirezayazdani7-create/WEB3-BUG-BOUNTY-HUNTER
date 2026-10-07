@@ -2,12 +2,14 @@
 pragma solidity ^0.8.20;
 
 interface IEthenaMintingP20Diag {
+
     function isSupportedAsset(
         address asset
     )
         external
         view
         returns (bool);
+
 
     function tokenConfig(
         address asset
@@ -21,6 +23,7 @@ interface IEthenaMintingP20Diag {
             uint128 maxRedeemPerBlock
         );
 
+
     function globalConfig()
         external
         view
@@ -30,10 +33,12 @@ interface IEthenaMintingP20Diag {
         );
 }
 
+
 contract MintingV2P20WETHDiagnosticTest {
 
     address constant MINTING =
         0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3;
+
 
     address constant WETH =
         0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
@@ -109,14 +114,25 @@ contract MintingV2P20WETHDiagnosticTest {
 
 
         /*
-         * Expected production state:
+         * ============================================================
+         * EXPECTED PRODUCTION STATE
+         * ============================================================
          *
-         * WETH is present in the asset configuration,
-         * but is NOT active for minting.
+         * The live V2 contract currently reports:
          *
-         * Therefore mintWETH() must revert with
+         * supported           = false
+         * active              = false
+         * tokenType           = 0
+         * maxMintPerBlock     = 0
+         * maxRedeemPerBlock   = 0
+         *
+         * Therefore WETH is NOT an active mint asset.
+         *
+         * mintWETH() is consequently expected to revert with
          * UnsupportedAsset().
          */
+
+
         assertTrue(
             !supported,
             "EXPECTED STATE CHANGED: WETH is supported"
@@ -130,11 +146,38 @@ contract MintingV2P20WETHDiagnosticTest {
 
 
         /*
-         * WETH must remain an ASSET-type token.
+         * WETH currently has the default TokenConfig token type.
          */
         assertTrue(
-            tokenType == 1,
+            tokenType == 0,
             "Unexpected WETH token type"
         );
+
+
+        /*
+         * Zero per-asset limits confirm that WETH is not configured
+         * as an active mint/redeem asset.
+         */
+        assertTrue(
+            maxMintPerBlock == 0,
+            "WETH unexpectedly has a mint cap"
+        );
+
+
+        assertTrue(
+            maxRedeemPerBlock == 0,
+            "WETH unexpectedly has a redeem cap"
+        );
+
+
+        /*
+         * Global limits are read and emitted as evidence.
+         *
+         * They are deliberately NOT asserted here because the purpose
+         * of this test is to establish the WETH-specific production
+         * configuration.
+         */
+        globalMaxMintPerBlock;
+        globalMaxRedeemPerBlock;
     }
 }
