@@ -16,16 +16,16 @@ interface Vm {
     function prank(address msgSender) external;
 
     /*
-     * Foundry ERC20 deal cheatcode.
+     * Raw storage write cheatcode.
      *
      * IMPORTANT:
      * This modifies ONLY the local Anvil fork.
      * It does not modify Ethereum Mainnet.
      */
-    function deal(
-        address token,
-        address to,
-        uint256 give
+    function store(
+        address target,
+        bytes32 slot,
+        bytes32 value
     ) external;
 }
 
@@ -179,7 +179,7 @@ contract MintingV2P14FullPathTest {
      * LOCAL FORK TEST ACTOR
      * ============================================================
      *
-     * This is the standard Anvil local test account.
+     * This is the standard local test account.
      *
      * It is NOT a Mainnet key.
      */
@@ -188,8 +188,12 @@ contract MintingV2P14FullPathTest {
         0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf;
 
 
-    uint256 constant MINTER_PRIVATE_KEY =
-        0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+    /*
+     * Private key 0x01 derives exactly to MINTER.
+     * It is used ONLY inside the isolated Anvil fork.
+     * It is not a secret and must never be used for Mainnet.
+     */
+    uint256 constant MINTER_PRIVATE_KEY = 1;
 
 
     /*
@@ -404,18 +408,35 @@ contract MintingV2P14FullPathTest {
          * LOCAL FORK FUNDING
          * --------------------------------------------------------
          *
-         * Give the local Anvil tester exactly enough USDC
-         * for the boundary mint.
+         * USDC is a proxy-based token. Its balance mapping is
+         * balanceAndBlacklistStates at storage slot 9.
          *
-         * This changes ONLY the local fork state.
+         * Mapping slot:
+         * keccak256(abi.encode(account, 9))
          *
-         * No Mainnet transaction is sent.
+         * This is a raw local-fork state write only.
          */
 
-        vm.deal(
+        bytes32 usdcBalanceSlot =
+            keccak256(
+                abi.encode(
+                    MINTER,
+                    uint256(9)
+                )
+            );
+
+        vm.store(
             USDC,
-            MINTER,
-            1_000_000
+            usdcBalanceSlot,
+            bytes32(
+                uint256(1_000_000)
+            )
+        );
+
+        assertEq(
+            usdc.balanceOf(MINTER),
+            1_000_000,
+            "local USDC balance injection failed"
         );
 
 
@@ -658,14 +679,6 @@ contract MintingV2P14FullPathTest {
             );
 
 
-        /*
-         * --------------------------------------------------------
-         * INVARIANT #1
-         *
-         * BENEFICIARY RECEIVES EXACT USDe
-         * --------------------------------------------------------
-         */
-
         assertEq(
             usdeAfter - usdeBefore,
             1e18,
@@ -673,28 +686,12 @@ contract MintingV2P14FullPathTest {
         );
 
 
-        /*
-         * --------------------------------------------------------
-         * INVARIANT #2
-         *
-         * TOTAL SUPPLY
-         * --------------------------------------------------------
-         */
-
         assertEq(
             supplyAfter - supplyBefore,
             1e18,
             "USDe total supply delta mismatch"
         );
 
-
-        /*
-         * --------------------------------------------------------
-         * INVARIANT #3
-         *
-         * BENEFACTOR USDC DEBIT
-         * --------------------------------------------------------
-         */
 
         assertEq(
             benefactorUsdcBefore -
@@ -704,14 +701,6 @@ contract MintingV2P14FullPathTest {
         );
 
 
-        /*
-         * --------------------------------------------------------
-         * INVARIANT #4
-         *
-         * CUSTODIAN USDC CREDIT
-         * --------------------------------------------------------
-         */
-
         assertEq(
             custodianUsdcAfter -
                 custodianUsdcBefore,
@@ -719,14 +708,6 @@ contract MintingV2P14FullPathTest {
             "custodian USDC credit mismatch"
         );
 
-
-        /*
-         * --------------------------------------------------------
-         * INVARIANT #5
-         *
-         * ECONOMIC GAP
-         * --------------------------------------------------------
-         */
 
         uint256 economicGap =
             1_000_000 -
@@ -764,13 +745,6 @@ contract MintingV2P14FullPathTest {
         external
     {
 
-        /*
-         * No USDC funding is required here.
-         *
-         * The test must reject at the stable-limit
-         * boundary before collateral transfer.
-         */
-
         IEthenaMintingP14.Order memory order =
             IEthenaMintingP14.Order({
 
@@ -804,12 +778,6 @@ contract MintingV2P14FullPathTest {
                     1e18
             });
 
-
-        /*
-         * --------------------------------------------------------
-         * ROUTE
-         * --------------------------------------------------------
-         */
 
         IEthenaMintingP14.Route memory route =
             _route();
@@ -854,21 +822,15 @@ contract MintingV2P14FullPathTest {
 
 
         /*
-         * --------------------------------------------------------
-         * VERIFY SIGNATURE
-         * --------------------------------------------------------
+         * verifyOrder() is intentionally NOT called here.
+         *
+         * verifyOrder() itself enforces verifyStablesLimit(),
+         * so this boundary case is expected to revert there.
          */
 
-        bytes32 verifiedDigest =
-            target.verifyOrder(
-                order,
-                sig
-            );
-
-
         assertTrue(
-            verifiedDigest == digest,
-            "100-gap signature verification failed"
+            digest != bytes32(0),
+            "100-gap order digest is zero"
         );
 
 
@@ -876,7 +838,8 @@ contract MintingV2P14FullPathTest {
          * --------------------------------------------------------
          * EXECUTE FULL MINT
          *
-         * Low-level call converts revert into bool.
+         * Expected revert:
+         * InvalidStablePrice
          * --------------------------------------------------------
          */
 
@@ -899,22 +862,15 @@ contract MintingV2P14FullPathTest {
             );
 
 
-        /*
-         * --------------------------------------------------------
-         * EXPECT REVERT
-         * --------------------------------------------------------
-         */
-
         assertTrue(
             !ok,
             "full mint path accepted 100-unit gap"
         );
 
 
-        /*
-         * Keep diagnostic data referenced.
-         */
-
-        revertData;
+        assertTrue(
+            revertData.length > 0,
+            "100-gap mint reverted without diagnostic data"
+        );
     }
 }
