@@ -45,14 +45,37 @@ jobs:
           echo "MAINNET_TRANSACTIONS=${MAINNET_TRANSACTIONS}"
           echo "LIVE_EXECUTION=${LIVE_EXECUTION}"
           echo "SUBMISSION=${SUBMISSION}"
-
           echo "SAFETY_CONFIGURATION=PASS"
+
+
+      - name: Check upstream Ethereum RPC
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Checking upstream RPC..."
+
+          RPC_RESULT="$(
+            cast chain-id \
+              --rpc-url "${MAINNET_RPC_URL}"
+          )"
+
+          echo "UPSTREAM_CHAIN_ID=${RPC_RESULT}"
+
+          test "${RPC_RESULT}" = "1"
+
+          echo "UPSTREAM_RPC=PASS"
 
 
       - name: Start isolated Anvil Mainnet fork
         shell: bash
         run: |
           set -euo pipefail
+
+          rm -f /tmp/anvil.log
+          rm -f /tmp/anvil.pid
+
+          echo "Starting isolated Anvil fork..."
 
           anvil \
             --fork-url "${MAINNET_RPC_URL}" \
@@ -62,18 +85,41 @@ jobs:
             --auto-impersonate \
             > /tmp/anvil.log 2>&1 &
 
-          echo $! > /tmp/anvil.pid
+          ANVIL_PID=$!
 
-          for i in $(seq 1 30); do
+          echo "${ANVIL_PID}" > /tmp/anvil.pid
+
+          echo "ANVIL_PID=${ANVIL_PID}"
+
+          READY=0
+
+          for i in $(seq 1 60); do
+
+            if ! kill -0 "${ANVIL_PID}" 2>/dev/null; then
+              echo "Anvil process exited early."
+              echo "===== ANVIL LOG ====="
+              cat /tmp/anvil.log || true
+              exit 1
+            fi
+
             if cast chain-id \
               --rpc-url http://127.0.0.1:8545 \
               >/dev/null 2>&1
             then
+              READY=1
+              echo "Anvil RPC became ready after ${i}s."
               break
             fi
 
             sleep 1
           done
+
+          if [ "${READY}" != "1" ]; then
+            echo "Anvil did not become ready."
+            echo "===== ANVIL LOG ====="
+            cat /tmp/anvil.log || true
+            exit 1
+          fi
 
           CHAIN_ID="$(
             cast chain-id \
