@@ -435,9 +435,11 @@ jobs:
           then
 
             P4="$(pending_amount "$HOLDER")"
+            Z_BEFORE_UNSTAKE="$(silo_assets)"
 
             echo "A04_COOLDOWN_AND_DISABLE=PASS"
             echo "A04_PENDING_BEFORE_UNSTAKE=$P4"
+            echo "A04_SILO_BEFORE_UNSTAKE=$Z_BEFORE_UNSTAKE"
 
             rpc evm_increaseTime 86401 >/dev/null
             rpc evm_mine >/dev/null
@@ -457,17 +459,22 @@ jobs:
               E4="$(raw_backing "$V4" "$Z4")"
 
               RECEIVER_DELTA="$(delta "$BEFORE_R" "$AFTER_R")"
-              SILO_OUTFLOW="$(python3 -c 'import sys; print(int(sys.argv[1]) - int(sys.argv[2]))' "$Z0" "$Z4")"
+
+              SILO_OUTFLOW="$(python3 -c 'import sys; print(int(sys.argv[1]) - int(sys.argv[2]))' "$Z_BEFORE_UNSTAKE" "$Z4")"
+
+              FULL_CYCLE_AFTER="$(python3 -c 'import sys; print(int(sys.argv[1]) + int(sys.argv[2]))' "$E4" "$RECEIVER_DELTA")"
 
               echo "A04_RECEIVER_DELTA=$RECEIVER_DELTA"
               echo "A04_SILO_OUTFLOW=$SILO_OUTFLOW"
               echo "A04_RAW_BACKING_BEFORE=$E0"
               echo "A04_RAW_BACKING_AFTER=$E4"
+              echo "A04_FULL_CYCLE_EXPECTED_BACKING=$E0"
+              echo "A04_FULL_CYCLE_RECONCILED=$FULL_CYCLE_AFTER"
 
               check_equal \
-                "A04_RAW_BACKING_CONSERVATION" \
+                "A04_FULL_CYCLE_CONSERVATION" \
                 "$E0" \
-                "$E4"
+                "$FULL_CYCLE_AFTER"
 
               if [ "$RECEIVER_DELTA" = "$P4" ]; then
                 echo "A04_RECEIVER_PENDING_RECONCILIATION=PASS"
@@ -479,6 +486,12 @@ jobs:
                 echo "A04_SILO_RECEIVER_RECONCILIATION=PASS"
               else
                 echo "A04_SILO_RECEIVER_RECONCILIATION=FAIL"
+              fi
+
+              if [ "$SILO_OUTFLOW" = "$P4" ]; then
+                echo "A04_SILO_PENDING_RECONCILIATION=PASS"
+              else
+                echo "A04_SILO_PENDING_RECONCILIATION=FAIL"
               fi
 
               echo "A04_RESULT=MEASURED"
