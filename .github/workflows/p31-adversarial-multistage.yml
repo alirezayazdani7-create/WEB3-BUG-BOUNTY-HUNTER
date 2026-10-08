@@ -1,0 +1,286 @@
+name: P31 — Adversarial Multi-Stage Local-Fork Attack Path
+
+on:
+  push:
+    paths:
+      - ".github/workflows/p31-adversarial-multistage.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  p31:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Clone authoritative audit harness
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/chrispyspearbit/ethena-audit-package.git /tmp/ethena-audit
+          test -f /tmp/ethena-audit/package/source/bbp-public-assets/contracts/foundry.toml
+          echo "AUTHORITATIVE_HARNESS=PASS"
+
+      - name: Build multi-stage adversarial test
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ethena-audit/package/source/bbp-public-assets/contracts/test/foundry/minting/tests
+
+          cat > /tmp/ethena-audit/package/source/bbp-public-assets/contracts/test/foundry/minting/tests/P31_AdversarialMultiStage.t.sol <<'SOL'
+          // SPDX-License-Identifier: MIT
+          pragma solidity 0.8.20;
+
+          import {Test} from "forge-std/Test.sol";
+          import {IEthenaMinting} from "../../../contracts/interfaces/IEthenaMinting.sol";
+
+          interface IERC20Like {
+            function balanceOf(address) external view returns (uint256);
+          }
+
+          interface IERC4626Like {
+            function redeem(
+              uint256 shares,
+              address receiver,
+              address owner
+            ) external returns (uint256);
+          }
+
+          contract P31_AdversarialMultiStage is Test {
+            address constant MINTING =
+              0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3;
+
+            address constant USDE =
+              0x4c9EDD5852cd905f086C759E8383e09bff1E68B3;
+
+            address constant SUSDE =
+              0x9d39A5de30e57443BfF2A8307A4256c8797A3497;
+
+            address attacker = address(0xA11CE);
+            address victim = address(0xB0B);
+
+            function setUp() public {
+              vm.createSelectFork(vm.envString("ETH_RPC_URL"));
+            }
+
+            function testFuzz_PublicMultiStageCannotMutateVictimAuthorization(
+              uint8 n
+            ) public {
+              n = uint8(bound(n, 1, 32));
+
+              bool beforeApproved =
+                IEthenaMinting(MINTING)
+                  .isApprovedBeneficiary(victim, attacker);
+
+              bool beforeWhitelisted =
+                IEthenaMinting(MINTING)
+                  .isWhitelistedBenefactor(victim);
+
+              for (uint256 i; i < n; ++i) {
+                vm.prank(attacker);
+
+                uint256 branch = i % 4;
+
+                if (branch == 0) {
+                  IEthenaMinting(MINTING)
+                    .setDelegatedSigner(victim);
+                } else if (branch == 1) {
+                  try IEthenaMinting(MINTING)
+                    .confirmDelegatedSigner(victim) {}
+                  catch {}
+                } else if (branch == 2) {
+                  IEthenaMinting(MINTING)
+                    .removeDelegatedSigner(victim);
+                } else {
+                  IEthenaMinting(MINTING)
+                    .setApprovedBeneficiary(victim, true);
+
+                  IEthenaMinting(MINTING)
+                    .setApprovedBeneficiary(victim, false);
+                }
+              }
+
+              assertEq(
+                IEthenaMinting(MINTING)
+                  .isApprovedBeneficiary(victim, attacker),
+                beforeApproved
+              );
+
+              assertEq(
+                IEthenaMinting(MINTING)
+                  .isWhitelistedBenefactor(victim),
+                beforeWhitelisted
+              );
+            }
+
+            function test_PublicAttackPathCannotReachMintOrRedeem()
+              public
+            {
+              IEthenaMinting minting =
+                IEthenaMinting(MINTING);
+
+              IEthenaMinting.Order memory order =
+                IEthenaMinting.Order({
+                  order_id: "P31",
+                  order_type:
+                    IEthenaMinting.OrderType.MINT,
+                  expiry:
+                    uint120(block.timestamp + 1 days),
+                  nonce: 1,
+                  benefactor: attacker,
+                  beneficiary: attacker,
+                  collateral_asset: USDE,
+                  collateral_amount: 1e18,
+                  usde_amount: 1e18
+                });
+
+              IEthenaMinting.Route memory route;
+
+              route.addresses =
+                new address[](1);
+
+              route.ratios =
+                new uint128[](1);
+
+              route.addresses[0] = attacker;
+              route.ratios[0] = 10000;
+
+              IEthenaMinting.Signature memory sig;
+
+              sig.signature_type =
+                IEthenaMinting.SignatureType.EIP712;
+
+              sig.signature_bytes =
+                new bytes(65);
+
+              vm.prank(attacker);
+
+              vm.expectRevert();
+
+              minting.mint(
+                order,
+                route,
+                sig
+              );
+
+              order.order_type =
+                IEthenaMinting.OrderType.REDEEM;
+
+              vm.prank(attacker);
+
+              vm.expectRevert();
+
+              minting.redeem(
+                order,
+                sig
+              );
+            }
+
+            function test_PublicSequenceDoesNotIncreaseAttackerUSDe()
+              public
+            {
+              deal(
+                USDE,
+                attacker,
+                10e18
+              );
+
+              uint256 beforeBal =
+                IERC20Like(USDE)
+                  .balanceOf(attacker);
+
+              for (uint256 i; i < 24; ++i) {
+                vm.prank(attacker);
+
+                if (i % 4 == 0) {
+                  IEthenaMinting(MINTING)
+                    .setDelegatedSigner(victim);
+                } else if (i % 4 == 1) {
+                  IEthenaMinting(MINTING)
+                    .removeDelegatedSigner(victim);
+                } else if (i % 4 == 2) {
+                  IEthenaMinting(MINTING)
+                    .setApprovedBeneficiary(
+                      victim,
+                      true
+                    );
+                } else {
+                  IEthenaMinting(MINTING)
+                    .setApprovedBeneficiary(
+                      victim,
+                      false
+                    );
+                }
+              }
+
+              assertEq(
+                IERC20Like(USDE)
+                  .balanceOf(attacker),
+                beforeBal
+              );
+            }
+
+            function test_PublicSequenceCannotCreateValueFromSUSDeWithoutOwnedShares()
+              public
+            {
+              uint256 beforeUSDe =
+                IERC20Like(USDE)
+                  .balanceOf(attacker);
+
+              uint256 beforeShares =
+                IERC20Like(SUSDE)
+                  .balanceOf(attacker);
+
+              vm.prank(attacker);
+
+              try IERC4626Like(SUSDE).redeem(
+                1,
+                attacker,
+                attacker
+              ) {} catch {}
+
+              assertEq(
+                IERC20Like(SUSDE)
+                  .balanceOf(attacker),
+                beforeShares
+              );
+
+              assertEq(
+                IERC20Like(USDE)
+                  .balanceOf(attacker),
+                beforeUSDe
+              );
+            }
+          }
+          SOL
+
+      - name: Execute P31 on isolated mainnet fork
+        env:
+          ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
+        run: |
+          set -euo pipefail
+
+          test -n "$ETH_RPC_URL"
+
+          cd /tmp/ethena-audit/package/source/bbp-public-assets/contracts
+
+          forge build
+
+          forge test \
+            --match-path test/foundry/minting/tests/P31_AdversarialMultiStage.t.sol \
+            -vvv
+
+          echo "P31_LOCAL_FORK_EXECUTION=PASS"
+
+      - name: Emit submission gate
+        run: |
+          echo "EXECUTION_MODE=LOCAL_FORK_ONLY"
+          echo "MAINNET_TRANSACTIONS=NONE"
+          echo "LIVE_EXECUTION=PROHIBITED"
+          echo "SUBMISSION=NOT_PERFORMED"
