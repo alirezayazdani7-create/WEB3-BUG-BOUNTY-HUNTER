@@ -4,18 +4,6 @@ pragma solidity ^0.8.20;
 import "forge-std/Test.sol";
 
 interface IEthenaMintingS06 {
-    struct TokenConfig {
-        uint8 tokenType;
-        bool isActive;
-        uint128 maxMintPerBlock;
-        uint128 maxRedeemPerBlock;
-    }
-
-    struct GlobalConfig {
-        uint128 globalMaxMintPerBlock;
-        uint128 globalMaxRedeemPerBlock;
-    }
-
     function tokenConfig(address asset)
         external
         view
@@ -89,10 +77,6 @@ contract MintingV2S06BlockCapTest is Test {
         );
     }
 
-    /*
-     * Test 1:
-     * Read the live configuration for USDC and the global mint cap.
-     */
     function test_S06_ReadLiveCapConfiguration() external {
         _fork();
 
@@ -151,11 +135,6 @@ contract MintingV2S06BlockCapTest is Test {
         );
     }
 
-    /*
-     * Test 2:
-     * Verify that the currently recorded mint amount
-     * cannot already exceed either cap.
-     */
     function test_S06_CurrentBlockAccounting() external {
         _fork();
 
@@ -234,13 +213,6 @@ contract MintingV2S06BlockCapTest is Test {
         );
     }
 
-    /*
-     * Test 3:
-     * Move exactly one block forward.
-     *
-     * Per-block accounting must start from zero
-     * for the new block.
-     */
     function test_S06_BlockBoundaryAccounting() external {
         _fork();
 
@@ -318,13 +290,6 @@ contract MintingV2S06BlockCapTest is Test {
         );
     }
 
-    /*
-     * Test 4:
-     * Confirm the cap values are represented as uint128
-     * and therefore cannot exceed uint128.max.
-     *
-     * This is a type/invariant diagnostic only.
-     */
     function test_S06_CapArithmeticCannotSilentlyWrap() external {
         _fork();
 
