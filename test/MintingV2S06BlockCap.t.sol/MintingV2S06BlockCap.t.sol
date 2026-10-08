@@ -43,6 +43,7 @@ interface IEthenaMintingS06 {
 }
 
 contract MintingV2S06BlockCapTest is Test {
+
     address constant MINTING =
         address(
             bytes20(
@@ -62,7 +63,9 @@ contract MintingV2S06BlockCapTest is Test {
 
     function _fork() internal {
         uint256 forkId =
-            vm.createFork(vm.envString("ETHENA_FORK_RPC"));
+            vm.createFork(
+                vm.envString("ETHENA_FORK_RPC")
+            );
 
         vm.selectFork(forkId);
 
@@ -77,7 +80,9 @@ contract MintingV2S06BlockCapTest is Test {
         );
     }
 
-    function test_S06_ReadLiveCapConfiguration() external {
+    function test_S06_ReadLiveCapConfiguration()
+        external
+    {
         _fork();
 
         (
@@ -119,7 +124,7 @@ contract MintingV2S06BlockCapTest is Test {
 
         assertTrue(
             active,
-            "S06: USDC token configuration is inactive"
+            "S06: USDC token configuration inactive"
         );
 
         assertGt(
@@ -135,7 +140,9 @@ contract MintingV2S06BlockCapTest is Test {
         );
     }
 
-    function test_S06_CurrentBlockAccounting() external {
+    function test_S06_CurrentBlockAccounting()
+        external
+    {
         _fork();
 
         uint256 currentBlock = block.number;
@@ -154,15 +161,15 @@ contract MintingV2S06BlockCapTest is Test {
         );
 
         (
-            ,
-            ,
+            uint8 tokenType,
+            bool active,
             uint128 assetMintCap,
-            
+            uint128 assetRedeemCap
         ) = target.tokenConfig(USDC);
 
         (
             uint128 globalMintCap,
-            
+            uint128 globalRedeemCap
         ) = target.globalConfig();
 
         emit log_named_uint(
@@ -181,17 +188,17 @@ contract MintingV2S06BlockCapTest is Test {
         );
 
         emit log_named_uint(
-            "S06 USDC minted",
+            "S06 asset minted",
             uint256(assetMinted)
         );
 
         emit log_named_uint(
-            "S06 USDC redeemed",
+            "S06 asset redeemed",
             uint256(assetRedeemed)
         );
 
         emit log_named_uint(
-            "S06 USDC mint cap",
+            "S06 asset mint cap",
             uint256(assetMintCap)
         );
 
@@ -200,20 +207,39 @@ contract MintingV2S06BlockCapTest is Test {
             uint256(globalMintCap)
         );
 
+        assertTrue(
+            active,
+            "S06: asset inactive"
+        );
+
         assertLe(
             assetMinted,
             assetMintCap,
-            "S06: asset mint accounting exceeds asset cap"
+            "S06: asset mint accounting exceeds cap"
         );
 
         assertLe(
             globalMinted,
             globalMintCap,
-            "S06: global mint accounting exceeds global cap"
+            "S06: global mint accounting exceeds cap"
+        );
+
+        assertLe(
+            assetRedeemed,
+            assetRedeemCap,
+            "S06: asset redeem accounting exceeds cap"
+        );
+
+        assertLe(
+            globalRedeemed,
+            globalRedeemCap,
+            "S06: global redeem accounting exceeds cap"
         );
     }
 
-    function test_S06_BlockBoundaryAccounting() external {
+    function test_S06_BlockBoundaryAccounting()
+        external
+    {
         _fork();
 
         uint256 beforeBlock = block.number;
@@ -221,12 +247,14 @@ contract MintingV2S06BlockCapTest is Test {
 
         (
             uint128 globalMintBefore,
-            
-        ) = target.totalPerBlock(beforeBlock);
+            uint128 globalRedeemBefore
+        ) = target.totalPerBlock(
+            beforeBlock
+        );
 
         (
             uint128 assetMintBefore,
-            
+            uint128 assetRedeemBefore
         ) = target.totalPerBlockPerAsset(
             beforeBlock,
             USDC
@@ -243,7 +271,7 @@ contract MintingV2S06BlockCapTest is Test {
         );
 
         emit log_named_uint(
-            "S06 previous USDC mint",
+            "S06 previous asset mint",
             uint256(assetMintBefore)
         );
 
@@ -251,12 +279,14 @@ contract MintingV2S06BlockCapTest is Test {
 
         (
             uint128 globalMintAfter,
-            
-        ) = target.totalPerBlock(nextBlock);
+            uint128 globalRedeemAfter
+        ) = target.totalPerBlock(
+            nextBlock
+        );
 
         (
             uint128 assetMintAfter,
-            
+            uint128 assetRedeemAfter
         ) = target.totalPerBlockPerAsset(
             nextBlock,
             USDC
@@ -273,58 +303,99 @@ contract MintingV2S06BlockCapTest is Test {
         );
 
         emit log_named_uint(
-            "S06 new USDC mint",
+            "S06 new asset mint",
             uint256(assetMintAfter)
         );
 
         assertEq(
             globalMintAfter,
             0,
-            "S06: global mint accounting carried into next block"
+            "S06: global mint carried into next block"
+        );
+
+        assertEq(
+            globalRedeemAfter,
+            0,
+            "S06: global redeem carried into next block"
         );
 
         assertEq(
             assetMintAfter,
             0,
-            "S06: asset mint accounting carried into next block"
+            "S06: asset mint carried into next block"
+        );
+
+        assertEq(
+            assetRedeemAfter,
+            0,
+            "S06: asset redeem carried into next block"
         );
     }
 
-    function test_S06_CapArithmeticCannotSilentlyWrap() external {
+    function test_S06_CapArithmeticCannotSilentlyWrap()
+        external
+    {
         _fork();
 
         (
-            ,
-            ,
+            uint8 tokenType,
+            bool active,
             uint128 assetMintCap,
-            
+            uint128 assetRedeemCap
         ) = target.tokenConfig(USDC);
 
         (
             uint128 globalMintCap,
-            
+            uint128 globalRedeemCap
         ) = target.globalConfig();
 
         emit log_named_uint(
-            "S06 asset cap",
+            "S06 asset mint cap",
             uint256(assetMintCap)
         );
 
         emit log_named_uint(
-            "S06 global cap",
+            "S06 asset redeem cap",
+            uint256(assetRedeemCap)
+        );
+
+        emit log_named_uint(
+            "S06 global mint cap",
             uint256(globalMintCap)
         );
 
-        assertLe(
-            assetMintCap,
-            type(uint128).max,
-            "S06: asset cap exceeds uint128 range"
+        emit log_named_uint(
+            "S06 global redeem cap",
+            uint256(globalRedeemCap)
         );
 
         assertLe(
-            globalMintCap,
-            type(uint128).max,
-            "S06: global cap exceeds uint128 range"
+            uint256(assetMintCap),
+            uint256(type(uint128).max),
+            "S06: asset mint cap outside uint128"
+        );
+
+        assertLe(
+            uint256(assetRedeemCap),
+            uint256(type(uint128).max),
+            "S06: asset redeem cap outside uint128"
+        );
+
+        assertLe(
+            uint256(globalMintCap),
+            uint256(type(uint128).max),
+            "S06: global mint cap outside uint128"
+        );
+
+        assertLe(
+            uint256(globalRedeemCap),
+            uint256(type(uint128).max),
+            "S06: global redeem cap outside uint128"
+        );
+
+        assertTrue(
+            active,
+            "S06: USDC inactive"
         );
     }
 }
