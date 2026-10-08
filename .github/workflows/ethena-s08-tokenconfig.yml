@@ -1,0 +1,25 @@
+name: Ethena S08 TokenConfig Lifecycle
+
+on:
+  workflow_dispatch:
+
+jobs:
+  s08:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Run S08 isolated fork test
+        env:
+          ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
+          S08_ASSET: ${{ secrets.S08_ASSET }}
+        run: |
+          forge test \
+            --match-contract EthenaS08TokenConfigLifecycle \
+            --match-test test_S08_RemoveReadd_StateTransition \
+            -vvv
