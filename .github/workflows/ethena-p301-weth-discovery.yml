@@ -1,11 +1,17 @@
+
+
 name: Ethena P30.1 WETH Accounting Discovery
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   p301:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -18,29 +24,19 @@ jobs:
         env:
           ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
         run: |
-          set -e
-
-          MINTING="0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3"
-
-          export MINTER_ROLE="$(cast keccak 'MINTER_ROLE')"
-          export ROLE_GRANTED="$(cast keccak 'RoleGranted(bytes32,address,address)')"
-          export ROLE_REVOKED="$(cast keccak 'RoleRevoked(bytes32,address,address)')"
-          export CUST_ADDED="$(cast keccak 'CustodianAddressAdded(address)')"
-          export CUST_REMOVED="$(cast keccak 'CustodianAddressRemoved(address)')"
+          set -euo pipefail
 
           python3 <<'PY'
           import os
           import json
+          import time
           import urllib.request
 
-          rpc = os.environ["ETHENA_FORK_RPC"]
-          minting = "0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3"
+          rpc = os.environ.get("ETHENA_FORK_RPC", "")
+          if not rpc:
+              raise RuntimeError("ETHENA_FORK_RPC secret is missing")
 
-          minter_role = os.environ["MINTER_ROLE"]
-          role_granted = os.environ["ROLE_GRANTED"]
-          role_revoked = os.environ["ROLE_REVOKED"]
-          cust_added = os.environ["CUST_ADDED"]
-          cust_removed = os.environ["CUST_REMOVED"]
+          minting = "0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3"
 
           def rpc_call(method, params):
               body = json.dumps({
@@ -56,18 +52,54 @@ jobs:
                   headers={"Content-Type": "application/json"}
               )
 
-              with urllib.request.urlopen(req) as response:
+              with urllib.request.urlopen(req, timeout=20) as response:
                   result = json.load(response)
 
               if "error" in result:
-                  raise RuntimeError(result["error"])
+                  raise RuntimeError(str(result["error"]))
 
               return result["result"]
 
-          latest = int(
-              rpc_call("eth_blockNumber", []),
-              16
-          )
+          def keccak(signature):
+              import subprocess
+              return subprocess.check_output(
+                  ["cast", "keccak", signature],
+                  text=True
+              ).strip()
+
+          granted = keccak("RoleGranted(bytes32,address,address)").lower()
+          revoked = keccak("RoleRevoked(bytes32,address,address)").lower()
+          minter_role = keccak("MINTER_ROLE").lower()
+          cust_added = keccak("CustodianAddressAdded(address)").lower()
+          cust_removed = keccak("CustodianAddressRemoved(address)").lower()
+
+          latest = int(rpc_call("eth_blockNumber", []), 16)
+          code = rpc_call("eth_getCode", [minting, hex(latest)])
+
+          if code == "0x":
+              raise RuntimeError(
+                  "Minting contract has no bytecode at latest block"
+              )
+
+          print("Latest block:", latest, flush=True)
+          print("Finding contract deployment block...", flush=True)
+
+          lo, hi = 0, latest
+
+          while lo < hi:
+              mid = (lo + hi) // 2
+              bytecode = rpc_call(
+                  "eth_getCode",
+                  [minting, hex(mid)]
+              )
+
+              if bytecode != "0x":
+                  hi = mid
+              else:
+                  lo = mid + 1
+
+          deployment_block = lo
+          print("Deployment block:", deployment_block, flush=True)
 
           def get_logs(start, end, topics):
               try:
@@ -85,155 +117,169 @@ jobs:
                       raise
 
                   mid = (start + end) // 2
+                  print(
+                      f"Provider range limit; splitting {start}-{end}",
+                      flush=True
+                  )
 
-                  left = get_logs(start, mid, topics)
-                  right = get_logs(mid + 1, end, topics)
+                  return (
+                      get_logs(start, mid, topics)
+                      + get_logs(mid + 1, end, topics)
+                  )
 
-                  return left + right
+          role_logs = []
+          cust_logs = []
 
-          role_logs = get_logs(
-              0,
-              latest,
-              [
-                  [role_granted, role_revoked],
-                  minter_role
-              ]
+          chunk_size = 5000
+          total = max(
+              1,
+              (latest - deployment_block + chunk_size) // chunk_size
           )
 
-          active_minters = set()
+          start = deployment_block
+          chunk_number = 0
 
-          for log in sorted(
-              role_logs,
-              key=lambda x: (
-                  int(x["blockNumber"], 16),
-                  int(x["logIndex"], 16)
+          while start <= latest:
+              end = min(start + chunk_size - 1, latest)
+              chunk_number += 1
+
+              role_logs.extend(get_logs(
+                  start,
+                  end,
+                  [[granted, revoked], minter_role]
+              ))
+
+              cust_logs.extend(get_logs(
+                  start,
+                  end,
+                  [[cust_added, cust_removed]]
+              ))
+
+              print(
+                  f"Scanned chunk {chunk_number}/{total}: "
+                  f"{start}-{end}; role logs={len(role_logs)}; "
+                  f"custodian logs={len(cust_logs)}",
+                  flush=True
               )
-          ):
-              event = log["topics"][0].lower()
-              account = "0x" + log["topics"][2][-40:]
 
-              if event == role_granted.lower():
-                  active_minters.add(account.lower())
+              start = end + 1
 
-              elif event == role_revoked.lower():
-                  active_minters.discard(account.lower())
-
-          cust_logs = get_logs(
-              0,
-              latest,
-              [
-                  [cust_added, cust_removed]
-              ]
-          )
-
-          active_custodians = set()
-
-          for log in sorted(
-              cust_logs,
-              key=lambda x: (
-                  int(x["blockNumber"], 16),
-                  int(x["logIndex"], 16)
+          def log_order(log):
+              return (
+                  int(log["blockNumber"], 16),
+                  int(log["logIndex"], 16)
               )
-          ):
-              event = log["topics"][0].lower()
-              account = "0x" + log["topics"][1][-40:]
 
-              if event == cust_added.lower():
-                  active_custodians.add(account.lower())
+          minters = set()
 
-              elif event == cust_removed.lower():
-                  active_custodians.discard(account.lower())
+          for log in sorted(role_logs, key=log_order):
+              topics = log.get("topics", [])
+              if len(topics) < 3:
+                  continue
 
-          if not active_minters:
+              event = topics[0].lower()
+              account = "0x" + topics[2][-40:]
+              account = account.lower()
+
+              if event == granted:
+                  minters.add(account)
+              elif event == revoked:
+                  minters.discard(account)
+
+          custodians = set()
+
+          for log in sorted(cust_logs, key=log_order):
+              topics = log.get("topics", [])
+              if len(topics) < 2:
+                  continue
+
+              event = topics[0].lower()
+              account = ("0x" + topics[1][-40:]).lower()
+
+              if event == cust_added:
+                  custodians.add(account)
+              elif event == cust_removed:
+                  custodians.discard(account)
+
+          if not minters:
               raise RuntimeError(
-                  "P301: no MINTER_ROLE holder discovered"
+                  "No MINTER_ROLE holders discovered from events"
               )
 
-          if not active_custodians:
+          if not custodians:
               raise RuntimeError(
-                  "P301: no custodian discovered"
+                  "No custodians discovered from events"
               )
 
           with open("/tmp/p301_minters.txt", "w") as f:
-              for address in sorted(active_minters):
-                  f.write(address + "\n")
+              f.write("\n".join(sorted(minters)) + "\n")
 
           with open("/tmp/p301_custodians.txt", "w") as f:
-              for address in sorted(active_custodians):
-                  f.write(address + "\n")
+              f.write("\n".join(sorted(custodians)) + "\n")
 
-          print("=== DISCOVERED MINTERS ===")
-
-          for address in sorted(active_minters):
-              print(address)
-
-          print("=== DISCOVERED CUSTODIANS ===")
-
-          for address in sorted(active_custodians):
-              print(address)
+          print("Discovered MINTER candidates:", len(minters), flush=True)
+          print("Discovered CUSTODIAN candidates:", len(custodians), flush=True)
           PY
+
+          MINTING="0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3"
+          MINTER_ROLE="$(cast keccak 'MINTER_ROLE')"
 
           P30_MINTER=""
 
           while read -r address; do
-
-            result=$(cast call \
+            result="$(cast call \
               "$MINTING" \
               "hasRole(bytes32,address)(bool)" \
               "$MINTER_ROLE" \
               "$address" \
-              --rpc-url "$ETHENA_FORK_RPC")
+              --rpc-url "$ETHENA_FORK_RPC")"
 
-            if echo "$result" | grep -qi "true"; then
+            if [ "$result" = "true" ]; then
               P30_MINTER="$address"
               break
             fi
-
           done < /tmp/p301_minters.txt
 
           if [ -z "$P30_MINTER" ]; then
-            echo "P301 ERROR: no verified MINTER"
+            echo "ERROR: no active MINTER_ROLE holder verified"
             exit 1
           fi
 
           P30_CUSTODIAN=""
 
           while read -r address; do
-
-            result=$(cast call \
+            result="$(cast call \
               "$MINTING" \
               "isCustodianAddress(address)(bool)" \
               "$address" \
-              --rpc-url "$ETHENA_FORK_RPC")
+              --rpc-url "$ETHENA_FORK_RPC")"
 
-            if echo "$result" | grep -qi "true"; then
+            if [ "$result" = "true" ]; then
               P30_CUSTODIAN="$address"
               break
             fi
-
           done < /tmp/p301_custodians.txt
 
           if [ -z "$P30_CUSTODIAN" ]; then
-            echo "P301 ERROR: no verified CUSTODIAN"
+            echo "ERROR: no active custodian verified"
             exit 1
           fi
 
-          echo "P30_MINTER=$P30_MINTER"
-          echo "P30_CUSTODIAN=$P30_CUSTODIAN"
+          echo "Verified MINTER: $P30_MINTER"
+          echo "Verified CUSTODIAN: $P30_CUSTODIAN"
 
           echo "P30_MINTER=$P30_MINTER" >> "$GITHUB_ENV"
           echo "P30_CUSTODIAN=$P30_CUSTODIAN" >> "$GITHUB_ENV"
 
       - name: Create isolated Foundry project
         run: |
-          set -e
+          set -euo pipefail
 
           rm -rf /tmp/p301
           mkdir -p /tmp/p301
           cd /tmp/p301
 
           forge init --force .
-
           rm -rf test
           mkdir -p test
 
@@ -245,16 +291,14 @@ jobs:
 
       - name: Verify environment
         run: |
+          set -euo pipefail
           test -n "$P30_MINTER"
           test -n "$P30_CUSTODIAN"
 
-          echo "Verified MINTER:"
-          echo "$P30_MINTER"
+          echo "Verified MINTER: $P30_MINTER"
+          echo "Verified CUSTODIAN: $P30_CUSTODIAN"
 
-          echo "Verified CUSTODIAN:"
-          echo "$P30_CUSTODIAN"
-
-      - name: Run P30.1
+      - name: Run P30.1 accounting test
         working-directory: /tmp/p301
         env:
           ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
@@ -267,5 +311,5 @@ jobs:
         if: success()
         run: |
           echo "P30.1 STATUS: TESTS PASSED"
-          echo "GREEN DOES NOT MEAN VULNERABILITY."
-          echo "FINDING REQUIRES REPRODUCIBLE UNAUTHORIZED ECONOMIC IMPACT."
+          echo "A passing test is not proof of a vulnerability."
+          echo "Any finding requires reproducible unauthorized economic impact."
