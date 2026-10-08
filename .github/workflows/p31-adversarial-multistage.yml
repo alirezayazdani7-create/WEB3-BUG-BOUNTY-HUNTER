@@ -1,4 +1,4 @@
-name: P31.1 — Adversarial Multi-Stage Local-Fork Attack Path
+name: P31.2 — Adversarial Multi-Stage Local-Fork Attack Path
 
 on:
   push:
@@ -34,7 +34,7 @@ jobs:
 
           echo "AUTHORITATIVE_HARNESS=PASS"
 
-      - name: Build P31.1 local-fork test
+      - name: Build P31.2 local-fork test
         run: |
           set -euo pipefail
 
@@ -147,8 +147,14 @@ jobs:
                *
                * Cross-account authorization isolation.
                *
-               * An attacker must not be able to modify
-               * authorization state belonging to VICTIM.
+               * The test contract itself is the unprivileged caller.
+               *
+               * We deliberately avoid vm.prank/startPrank because
+               * the fork RPC backend rejected synthetic EOAs with
+               * JSON-RPC -32603.
+               *
+               * A direct call preserves the real authorization
+               * boundary without requiring impersonation.
                */
               function testStage1_CrossAccountAuthorizationIsolation()
                   public
@@ -167,7 +173,12 @@ jobs:
                           VICTIM
                       );
 
-                  vm.startPrank(ATTACKER);
+                  /*
+                   * Direct unprivileged calls.
+                   *
+                   * msg.sender at EthenaMinting is this test contract.
+                   * None of these calls should modify VICTIM's state.
+                   */
 
                   try minting.setDelegatedSigner(
                       VICTIM
@@ -185,8 +196,6 @@ jobs:
                       VICTIM,
                       true
                   ) {} catch {}
-
-                  vm.stopPrank();
 
                   assertEq(
                       minting.isApprovedBeneficiary(
@@ -209,9 +218,12 @@ jobs:
                *
                * Unprivileged mint/redeem reachability.
                *
-               * No balance manipulation and no deal().
-               * The objective is only to establish that an
-               * attacker cannot cross the execution boundary.
+               * No balance manipulation.
+               * No deal().
+               * No synthetic EOA impersonation.
+               *
+               * The test contract calls directly, so msg.sender at
+               * EthenaMinting is the unprivileged test contract itself.
                */
               function testStage2_UnprivilegedCannotReachMintRedeem()
                   public
@@ -221,7 +233,7 @@ jobs:
 
                   IEthenaMintingP31.Order memory mintOrder =
                       IEthenaMintingP31.Order({
-                          order_id: "P31.1-MINT",
+                          order_id: "P31.2-MINT",
                           order_type:
                               IEthenaMintingP31.OrderType.MINT,
                           expiry:
@@ -245,7 +257,7 @@ jobs:
                       new uint128[](1);
 
                   route.addresses[0] =
-                      ATTACKER;
+                      address(this);
 
                   route.ratios[0] =
                       10000;
@@ -258,8 +270,10 @@ jobs:
                   sig.signature_bytes =
                       new bytes(65);
 
-                  vm.startPrank(ATTACKER);
-
+                  /*
+                   * The unprivileged test contract must not be able
+                   * to cross the mint execution boundary.
+                   */
                   try minting.mint(
                       mintOrder,
                       route,
@@ -272,7 +286,7 @@ jobs:
 
                   IEthenaMintingP31.Order memory redeemOrder =
                       IEthenaMintingP31.Order({
-                          order_id: "P31.1-REDEEM",
+                          order_id: "P31.2-REDEEM",
                           order_type:
                               IEthenaMintingP31.OrderType.REDEEM,
                           expiry:
@@ -287,6 +301,10 @@ jobs:
                           usde_amount: 1e18
                       });
 
+                  /*
+                   * The unprivileged test contract must not be able
+                   * to cross the redeem execution boundary.
+                   */
                   try minting.redeem(
                       redeemOrder,
                       sig
@@ -295,18 +313,18 @@ jobs:
                           "UNPRIVILEGED_REDEEM_DID_NOT_REVERT"
                       );
                   } catch {}
-
-                  vm.stopPrank();
               }
 
               /*
                * STAGE 3
                *
-               * Repeated authorization transitions.
+               * Repeated authorization transitions from an
+               * unprivileged contract caller.
                *
-               * No token balance access. The only invariant
-               * checked is that VICTIM's authorization state
-               * remains isolated from ATTACKER.
+               * No token balance access.
+               *
+               * The invariant is that VICTIM's authorization state
+               * remains isolated from this caller.
                */
               function testStage3_RepeatedAuthorizationTransitions()
                   public
@@ -330,34 +348,39 @@ jobs:
                       i < 64;
                       ++i
                   ) {
-                      vm.startPrank(ATTACKER);
 
                       if (i % 4 == 0) {
+
                           try minting.setDelegatedSigner(
                               VICTIM
                           ) {} catch {}
+
                       }
 
                       if (i % 4 == 1) {
+
                           try minting.confirmDelegatedSigner(
                               VICTIM
                           ) {} catch {}
+
                       }
 
                       if (i % 4 == 2) {
+
                           try minting.removeDelegatedSigner(
                               VICTIM
                           ) {} catch {}
+
                       }
 
                       if (i % 4 == 3) {
+
                           try minting.setApprovedBeneficiary(
                               VICTIM,
                               true
                           ) {} catch {}
-                      }
 
-                      vm.stopPrank();
+                      }
                   }
 
                   assertEq(
@@ -381,8 +404,8 @@ jobs:
                *
                * Authorization reset / replay boundary.
                *
-               * A repeated delegated-signer transition must not
-               * accidentally grant ATTACKER authority over VICTIM.
+               * Repeated delegated-signer transitions must not
+               * accidentally alter VICTIM's authorization state.
                */
               function testStage4_DelegationReplayBoundary()
                   public
@@ -395,8 +418,6 @@ jobs:
                           VICTIM,
                           ATTACKER
                       );
-
-                  vm.startPrank(ATTACKER);
 
                   try minting.setDelegatedSigner(
                       VICTIM
@@ -424,8 +445,6 @@ jobs:
                       false
                   ) {} catch {}
 
-                  vm.stopPrank();
-
                   assertEq(
                       minting.isApprovedBeneficiary(
                           VICTIM,
@@ -438,9 +457,11 @@ jobs:
               /*
                * STAGE 5
                *
-               * Combined adversarial sequence.
+               * Combined adversarial sequence from an
+               * unprivileged contract caller.
                *
                * No artificial balances are introduced.
+               *
                * The invariant is authorization isolation.
                */
               function testStage5_CombinedSequencePreservesAuthorization()
@@ -465,47 +486,55 @@ jobs:
                       i < 128;
                       ++i
                   ) {
-                      vm.startPrank(ATTACKER);
 
                       if (i % 6 == 0) {
+
                           try minting.setDelegatedSigner(
                               VICTIM
                           ) {} catch {}
+
                       }
 
                       if (i % 6 == 1) {
+
                           try minting.confirmDelegatedSigner(
                               VICTIM
                           ) {} catch {}
+
                       }
 
                       if (i % 6 == 2) {
+
                           try minting.removeDelegatedSigner(
                               VICTIM
                           ) {} catch {}
+
                       }
 
                       if (i % 6 == 3) {
+
                           try minting.setApprovedBeneficiary(
                               VICTIM,
                               true
                           ) {} catch {}
+
                       }
 
                       if (i % 6 == 4) {
+
                           try minting.setApprovedBeneficiary(
                               VICTIM,
                               false
                           ) {} catch {}
+
                       }
 
                       if (i % 6 == 5) {
+
                           try minting.confirmDelegatedSigner(
                               VICTIM
                           ) {} catch {}
                       }
-
-                      vm.stopPrank();
                   }
 
                   assertEq(
@@ -526,7 +555,7 @@ jobs:
           }
           SOL
 
-      - name: Execute P31.1 on isolated mainnet fork
+      - name: Execute P31.2 on isolated mainnet fork
         env:
           ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
         run: |
@@ -543,7 +572,7 @@ jobs:
             test/foundry/minting/tests/P31_AdversarialMultiStage.t.sol \
             -vvv
 
-          echo "P31_1_LOCAL_FORK_EXECUTION=PASS"
+          echo "P31_2_LOCAL_FORK_EXECUTION=PASS"
 
       - name: Emit submission gate
         if: always()
