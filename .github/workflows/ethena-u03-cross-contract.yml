@@ -16,10 +16,17 @@ jobs:
 
       - name: Create isolated Foundry project
         run: |
-          mkdir -p /tmp/u03/src /tmp/u03/test
-          cp test/U03CrossContractInvariantProbe.t.sol /tmp/u03/test/
+          rm -rf /tmp/u03
+          mkdir -p /tmp/u03
           cd /tmp/u03
-          forge init --force --no-git .
+
+          forge init --force .
+
+          rm -rf test
+          mkdir -p test
+
+          cp "$GITHUB_WORKSPACE/test/U03CrossContractInvariantProbe.t.sol" test/
+
           forge install foundry-rs/forge-std --no-commit
 
       - name: Run U03
