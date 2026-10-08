@@ -103,9 +103,7 @@ jobs:
 
           minter_role = topic("MINTER_ROLE")
 
-          # Rate limit: keep at least 0.55 seconds between API requests.
-          # Retry temporary rate-limit responses with exponential backoff.
-          MIN_REQUEST_INTERVAL = 0.55
+          MIN_REQUEST_INTERVAL = 0.7
           last_request_time = 0.0
 
           def etherscan_request(params):
@@ -133,18 +131,23 @@ jobs:
                           req, timeout=30
                       ) as response:
                           body = response.read()
-                      last_request_time = time.monotonic()
 
+                      last_request_time = time.monotonic()
                       data = json.loads(body.decode("utf-8"))
-                      message = str(data.get("result", ""))
+
+                      api_message = str(data.get("message", ""))
+                      api_result = data.get("result", "")
                       combined = (
-                          str(data.get("message", "")) + " " + message
+                          api_message + " " + str(api_result)
                       ).lower()
 
                       if data.get("status") == "1":
                           return data
 
-                      if "no records found" in combined:
+                      if (
+                          "no records found" in combined
+                          or "no records" in combined
+                      ):
                           return data
 
                       rate_limited = any(term in combined for term in (
@@ -152,25 +155,28 @@ jobs:
                           "max calls per sec",
                           "too many requests",
                           "temporarily unavailable",
-                          "timeout"
+                          "timeout",
+                          "busy"
                       ))
 
                       if rate_limited and attempt < 5:
-                          delay = min(2 ** attempt, 20)
+                          delay = min(2 ** (attempt + 1), 20)
                           print(
-                              "Etherscan rate limit; retrying in "
-                              + str(delay) + "s (attempt "
-                              + str(attempt + 1) + "/6)",
+                              "Etherscan temporary error; retrying in "
+                              + str(delay) + "s; attempt "
+                              + str(attempt + 1) + "/6",
                               flush=True
                           )
                           time.sleep(delay)
                           continue
 
                       raise RuntimeError(
-                          "Etherscan API error: "
-                          + str(data.get("message"))
-                          + " "
-                          + message
+                          "Etherscan API error: HTTP 200; status="
+                          + str(data.get("status"))
+                          + "; message="
+                          + api_message
+                          + "; result="
+                          + repr(api_result)[:1200]
                       )
 
                   except urllib.error.HTTPError as exc:
@@ -178,22 +184,31 @@ jobs:
 
                       if exc.code in (429, 500, 502, 503, 504) \
                               and attempt < 5:
-                          delay = min(2 ** attempt, 20)
+                          delay = min(2 ** (attempt + 1), 20)
                           print(
-                              "HTTP " + str(exc.code)
-                              + "; retrying in " + str(delay) + "s",
+                              "Etherscan HTTP "
+                              + str(exc.code)
+                              + "; retrying in "
+                              + str(delay) + "s",
                               flush=True
                           )
                           time.sleep(delay)
                           continue
 
-                      raise
+                      body = exc.read().decode(
+                          "utf-8", errors="replace"
+                      )
+                      raise RuntimeError(
+                          "Etherscan HTTP error "
+                          + str(exc.code)
+                          + ": " + body[:1000]
+                      )
 
-                  except urllib.error.URLError:
+                  except urllib.error.URLError as exc:
                       last_request_time = time.monotonic()
 
                       if attempt < 5:
-                          delay = min(2 ** attempt, 20)
+                          delay = min(2 ** (attempt + 1), 20)
                           print(
                               "Network error; retrying in "
                               + str(delay) + "s",
@@ -202,7 +217,10 @@ jobs:
                           time.sleep(delay)
                           continue
 
-                      raise
+                      raise RuntimeError(
+                          "Etherscan network request failed: "
+                          + str(exc)
+                      )
 
               raise RuntimeError("Etherscan retries exhausted")
 
@@ -231,20 +249,40 @@ jobs:
                   data = etherscan_request(params)
 
                   if data.get("status") != "1":
-                      message = str(data.get("result", ""))
+                      api_message = str(data.get("message", ""))
+                      api_result = data.get("result", "")
+                      combined = (
+                          api_message + " " + str(api_result)
+                      ).lower()
 
-                      if "no records found" in message.lower():
+                      if (
+                          "no records found" in combined
+                          or "no records" in combined
+                      ):
+                          print(
+                              "No matching logs for event "
+                              + event_topic[:12]
+                              + " page " + str(page),
+                              flush=True
+                          )
                           break
 
                       raise RuntimeError(
-                          "Could not retrieve event logs: " + message
+                          "Could not retrieve event logs. "
+                          + "status="
+                          + str(data.get("status"))
+                          + "; message="
+                          + api_message
+                          + "; result="
+                          + repr(api_result)[:1200]
                       )
 
                   records = data.get("result", [])
 
                   if not isinstance(records, list):
                       raise RuntimeError(
-                          "Unexpected Etherscan logs response"
+                          "Unexpected Etherscan logs response: "
+                          + repr(records)[:1000]
                       )
 
                   all_logs.extend(records)
