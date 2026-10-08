@@ -1,0 +1,27 @@
+name: Ethena U03 Cross Contract
+
+on:
+  workflow_dispatch:
+
+jobs:
+  u03:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Run U03
+        env:
+          ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
+          U03_PSM: ${{ secrets.U03_PSM }}
+          U03_USDTB: ${{ secrets.U03_USDTB }}
+          U03_COLLATERAL: ${{ secrets.U03_COLLATERAL }}
+          U03_SWAP_CALL: ${{ secrets.U03_SWAP_CALL }}
+        run: |
+          forge test \
+            --match-contract U03CrossContractInvariantProbe \
+            -vvv
