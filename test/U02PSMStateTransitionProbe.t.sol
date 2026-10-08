@@ -33,15 +33,25 @@ interface IPSMU02 {
 contract U02PSMStateTransitionProbe is Test {
 
     address constant PSM =
-        address(uint160(0x73E35C5c35A274E34AdE6EB13cC7f62aEE323728));
+        address(
+            bytes20(
+                hex"73E35C5c35A274E34AdE6EB13cC7f62aEE323728"
+            )
+        );
 
     address constant USDC =
-        address(uint160(0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48));
+        address(
+            bytes20(
+                hex"A0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+            )
+        );
 
     function test_U02_UnapprovedBenefactorMustRevert() external {
 
         uint256 forkId =
-            vm.createFork(vm.envString("ETHENA_FORK_RPC"));
+            vm.createFork(
+                vm.envString("ETHENA_FORK_RPC")
+            );
 
         vm.selectFork(forkId);
 
