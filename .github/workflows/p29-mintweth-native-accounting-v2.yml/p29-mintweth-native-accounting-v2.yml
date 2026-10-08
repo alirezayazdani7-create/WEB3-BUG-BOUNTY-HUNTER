@@ -1,0 +1,74 @@
+name: P29 V2 — MintWETH Native ETH Accounting Diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  p29-v2:
+    name: P29 V2 Fork Diagnostic
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Inspect repository
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          echo "=== ROOT ==="
+          pwd
+          ls -la
+
+          echo "=== SOLIDITY / FOUNDRY FILES ==="
+          find . -type f \
+            \( -name "*.sol" -o -name "foundry.toml" \) \
+            -not -path "./.git/*" \
+            -print | sort | head -300
+
+      - name: Foundry version
+        run: forge --version
+
+      - name: Build
+        run: forge build
+
+      - name: Locate P29 test
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          find . -type f \
+            -name "P29_MintWETHAccountingDiagnostic.t.sol" \
+            -not -path "./.git/*" \
+            -print
+
+      - name: Run P29 diagnostic
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          TEST_FILE="$(find . -type f \
+            -name "P29_MintWETHAccountingDiagnostic.t.sol" \
+            -not -path "./.git/*" | head -1)"
+
+          if [ -z "$TEST_FILE" ]; then
+            echo "ERROR: P29 test file not found."
+            exit 1
+          fi
+
+          echo "Running:"
+          echo "$TEST_FILE"
+
+          forge test \
+            --match-contract P29_MintWETHAccountingDiagnostic \
+            -vvv
