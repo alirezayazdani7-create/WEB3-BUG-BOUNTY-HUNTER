@@ -1,0 +1,258 @@
+name: Ethena P30.1 WETH Accounting Discovery
+
+on:
+  workflow_dispatch:
+
+jobs:
+  p301:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Discover live MINTER and CUSTODIAN
+        env:
+          ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
+        run: |
+          set -e
+
+          MINTING="0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3"
+
+          MINTER_ROLE=$(cast keccak "MINTER_ROLE")
+          ROLE_GRANTED=$(cast keccak "RoleGranted(bytes32,address,address)")
+          ROLE_REVOKED=$(cast keccak "RoleRevoked(bytes32,address,address)")
+          CUST_ADDED=$(cast keccak "CustodianAddressAdded(address)")
+          CUST_REMOVED=$(cast keccak "CustodianAddressRemoved(address)")
+
+          python3 <<'PY'
+          import os
+          import json
+          import urllib.request
+
+          rpc = os.environ["ETHENA_FORK_RPC"]
+          minting = "0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3".lower()
+
+          minter_role = os.environ["MINTER_ROLE"]
+          role_granted = os.environ["ROLE_GRANTED"]
+          role_revoked = os.environ["ROLE_REVOKED"]
+          cust_added = os.environ["CUST_ADDED"]
+          cust_removed = os.environ["CUST_REMOVED"]
+
+          def rpc_call(method, params):
+              body = json.dumps({
+                  "jsonrpc": "2.0",
+                  "id": 1,
+                  "method": method,
+                  "params": params
+              }).encode()
+
+              req = urllib.request.Request(
+                  rpc,
+                  data=body,
+                  headers={"Content-Type": "application/json"}
+              )
+
+              with urllib.request.urlopen(req) as r:
+                  out = json.load(r)
+
+              if "error" in out:
+                  raise RuntimeError(out["error"])
+
+              return out["result"]
+
+          latest = int(
+              rpc_call("eth_blockNumber", []),
+              16
+          )
+
+          def get_logs(start, end, topics):
+              try:
+                  return rpc_call(
+                      "eth_getLogs",
+                      [{
+                          "fromBlock": hex(start),
+                          "toBlock": hex(end),
+                          "address": minting,
+                          "topics": topics
+                      }]
+                  )
+              except Exception:
+                  if start >= end:
+                      raise
+
+                  mid = (start + end) // 2
+
+                  return (
+                      get_logs(start, mid, topics)
+                      +
+                      get_logs(mid + 1, end, topics)
+                  )
+
+          role_logs = get_logs(
+              0,
+              latest,
+              [
+                  [role_granted, role_revoked],
+                  minter_role
+              ]
+          )
+
+          active_minters = set()
+
+          ordered = sorted(
+              role_logs,
+              key=lambda x: (
+                  int(x["blockNumber"], 16),
+                  int(x["logIndex"], 16)
+              )
+          )
+
+          for log in ordered:
+              event = log["topics"][0].lower()
+              account = "0x" + log["topics"][2][-40:]
+
+              if event == role_granted.lower():
+                  active_minters.add(account.lower())
+
+              elif event == role_revoked.lower():
+                  active_minters.discard(account.lower())
+
+          cust_logs = get_logs(
+              0,
+              latest,
+              [
+                  [cust_added, cust_removed]
+              ]
+          )
+
+          active_custodians = set()
+
+          ordered = sorted(
+              cust_logs,
+              key=lambda x: (
+                  int(x["blockNumber"], 16),
+                  int(x["logIndex"], 16)
+              )
+          )
+
+          for log in ordered:
+              event = log["topics"][0].lower()
+              account = "0x" + log["topics"][1][-40:]
+
+              if event == cust_added.lower():
+                  active_custodians.add(account.lower())
+
+              elif event == cust_removed.lower():
+                  active_custodians.discard(account.lower())
+
+          if not active_minters:
+              raise RuntimeError("No MINTER_ROLE holder discovered")
+
+          if not active_custodians:
+              raise RuntimeError("No custodian discovered")
+
+          with open("/tmp/p301_minters.txt", "w") as f:
+              for x in sorted(active_minters):
+                  f.write(x + "\n")
+
+          with open("/tmp/p301_custodians.txt", "w") as f:
+              for x in sorted(active_custodians):
+                  f.write(x + "\n")
+
+          print("Discovered MINTER candidates:")
+          for x in sorted(active_minters):
+              print(x)
+
+          print("Discovered CUSTODIAN candidates:")
+          for x in sorted(active_custodians):
+              print(x)
+          PY
+
+          export MINTER_ROLE
+          export ROLE_GRANTED
+          export ROLE_REVOKED
+          export CUST_ADDED
+          export CUST_REMOVED
+
+          P30_MINTER=""
+
+          while read -r addr; do
+            ok=$(cast call \
+              "$MINTING" \
+              "hasRole(bytes32,address)(bool)" \
+              "$MINTER_ROLE" \
+              "$addr" \
+              --rpc-url "$ETHENA_FORK_RPC")
+
+            if echo "$ok" | grep -qi "true"; then
+              P30_MINTER="$addr"
+              break
+            fi
+          done < /tmp/p301_minters.txt
+
+          if [ -z "$P30_MINTER" ]; then
+            echo "ERROR: no currently verified MINTER"
+            exit 1
+          fi
+
+          P30_CUSTODIAN=""
+
+          while read -r addr; do
+            ok=$(cast call \
+              "$MINTING" \
+              "isCustodianAddress(address)(bool)" \
+              "$addr" \
+              --rpc-url "$ETHENA_FORK_RPC")
+
+            if echo "$ok" | grep -qi "true"; then
+              P30_CUSTODIAN="$addr"
+              break
+            fi
+          done < /tmp/p301_custodians.txt
+
+          if [ -z "$P30_CUSTODIAN" ]; then
+            echo "ERROR: no currently verified custodian"
+            exit 1
+          fi
+
+          echo "P30_MINTER=$P30_MINTER"
+          echo "P30_CUSTODIAN=$P30_CUSTODIAN"
+
+          echo "P30_MINTER=$P30_MINTER" >> "$GITHUB_ENV"
+          echo "P30_CUSTODIAN=$P30_CUSTODIAN" >> "$GITHUB_ENV"
+
+      - name: Create isolated Foundry project
+        run: |
+          rm -rf /tmp/p301
+          mkdir -p /tmp/p301
+          cd /tmp/p301
+
+          forge init --force .
+
+          rm -rf test
+          mkdir -p test
+
+          cp "$GITHUB_WORKSPACE/test/P30_1_MintWETHAccountingDiscovery.t.sol" \
+             test/P30_1_MintWETHAccountingDiscovery.t.sol
+
+          forge install foundry-rs/forge-std --no-commit
+
+      - name: Run P30.1
+        working-directory: /tmp/p301
+        env:
+          ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
+        run: |
+          forge test \
+            --match-contract P301MintWETHAccountingDiscoveryTest \
+            -vvv
+
+      - name: Completion
+        if: success()
+        run: |
+          echo "P30.1 STATUS: TESTS PASSED"
+          echo "GREEN IS NOT A VULNERABILITY."
+          echo "A FINDING REQUIRES UNAUTHORIZED ECONOMIC IMPACT."
