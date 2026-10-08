@@ -1,4 +1,4 @@
-
+File: ".github/workflows/ethena-p301-weth-discovery.yml"
 
 name: Ethena P30.1 WETH Accounting Discovery
 
@@ -20,9 +20,10 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
-      - name: Discover MINTER and CUSTODIAN
+      - name: Discover and verify MINTER and CUSTODIAN
         env:
           ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
+          ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
         run: |
           set -euo pipefail
 
@@ -30,16 +31,19 @@ jobs:
           import os
           import json
           import time
+          import urllib.parse
           import urllib.request
+          import subprocess
 
-          rpc = os.environ.get("ETHENA_FORK_RPC", "")
-          if not rpc:
-              raise RuntimeError("ETHENA_FORK_RPC secret is missing")
+          rpc = os.environ["ETHENA_FORK_RPC"]
+          api_key = os.environ["ETHERSCAN_API_KEY"]
+          contract = "0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3"
 
-          minting = "0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3"
+          if not rpc or not api_key:
+              raise RuntimeError("RPC or Etherscan API key is missing")
 
           def rpc_call(method, params):
-              body = json.dumps({
+              payload = json.dumps({
                   "jsonrpc": "2.0",
                   "id": 1,
                   "method": method,
@@ -48,7 +52,7 @@ jobs:
 
               req = urllib.request.Request(
                   rpc,
-                  data=body,
+                  data=payload,
                   headers={"Content-Type": "application/json"}
               )
 
@@ -60,111 +64,122 @@ jobs:
 
               return result["result"]
 
-          def keccak(signature):
-              import subprocess
+          def topic(signature):
               return subprocess.check_output(
                   ["cast", "keccak", signature],
                   text=True
-              ).strip()
-
-          granted = keccak("RoleGranted(bytes32,address,address)").lower()
-          revoked = keccak("RoleRevoked(bytes32,address,address)").lower()
-          minter_role = keccak("MINTER_ROLE").lower()
-          cust_added = keccak("CustodianAddressAdded(address)").lower()
-          cust_removed = keccak("CustodianAddressRemoved(address)").lower()
+              ).strip().lower()
 
           latest = int(rpc_call("eth_blockNumber", []), 16)
-          code = rpc_call("eth_getCode", [minting, hex(latest)])
 
-          if code == "0x":
-              raise RuntimeError(
-                  "Minting contract has no bytecode at latest block"
-              )
+          if rpc_call("eth_getCode", [contract, hex(latest)]) == "0x":
+              raise RuntimeError("Minting V2 has no bytecode at latest block")
 
           print("Latest block:", latest, flush=True)
-          print("Finding contract deployment block...", flush=True)
+          print("Finding deployment block...", flush=True)
 
-          lo, hi = 0, latest
+          low, high = 0, latest
 
-          while lo < hi:
-              mid = (lo + hi) // 2
-              bytecode = rpc_call(
-                  "eth_getCode",
-                  [minting, hex(mid)]
-              )
+          while low < high:
+              mid = (low + high) // 2
+              code = rpc_call("eth_getCode", [contract, hex(mid)])
 
-              if bytecode != "0x":
-                  hi = mid
+              if code == "0x":
+                  low = mid + 1
               else:
-                  lo = mid + 1
+                  high = mid
 
-          deployment_block = lo
-          print("Deployment block:", deployment_block, flush=True)
+          deployment = low
+          print("Deployment block:", deployment, flush=True)
 
-          def get_logs(start, end, topics):
-              try:
-                  return rpc_call(
-                      "eth_getLogs",
-                      [{
-                          "fromBlock": hex(start),
-                          "toBlock": hex(end),
-                          "address": minting,
-                          "topics": topics
-                      }]
+          signatures = {
+              "granted": topic("RoleGranted(bytes32,address,address)"),
+              "revoked": topic("RoleRevoked(bytes32,address,address)"),
+              "cust_added": topic("CustodianAddressAdded(address)"),
+              "cust_removed": topic("CustodianAddressRemoved(address)")
+          }
+
+          minter_role = topic("MINTER_ROLE")
+
+          def etherscan_logs(event_topic, indexed_topic=None):
+              page = 1
+              all_logs = []
+
+              while True:
+                  params = {
+                      "chainid": "1",
+                      "module": "logs",
+                      "action": "getLogs",
+                      "fromBlock": str(deployment),
+                      "toBlock": str(latest),
+                      "address": contract,
+                      "topic0": event_topic,
+                      "page": str(page),
+                      "offset": "1000",
+                      "apikey": api_key
+                  }
+
+                  if indexed_topic:
+                      params["topic0_1_opr"] = "and"
+                      params["topic1"] = indexed_topic
+
+                  url = (
+                      "https://api.etherscan.io/v2/api?"
+                      + urllib.parse.urlencode(params)
                   )
-              except Exception:
-                  if start >= end:
-                      raise
 
-                  mid = (start + end) // 2
+                  req = urllib.request.Request(
+                      url,
+                      headers={"User-Agent": "P301-research/1.0"}
+                  )
+
+                  with urllib.request.urlopen(req, timeout=30) as response:
+                      data = json.load(response)
+
+                  if data.get("status") != "1":
+                      message = str(data.get("result", ""))
+
+                      if "no records found" in message.lower():
+                          break
+
+                      raise RuntimeError(
+                          "Etherscan logs API error: "
+                          + str(data.get("message"))
+                          + " "
+                          + message
+                      )
+
+                  records = data["result"]
+
+                  if not isinstance(records, list):
+                      raise RuntimeError("Unexpected logs API response")
+
+                  all_logs.extend(records)
+
                   print(
-                      f"Provider range limit; splitting {start}-{end}",
+                      f"Event {event_topic[:12]} page {page}: "
+                      f"{len(records)} records",
                       flush=True
                   )
 
-                  return (
-                      get_logs(start, mid, topics)
-                      + get_logs(mid + 1, end, topics)
-                  )
+                  if len(records) < 1000:
+                      break
 
-          role_logs = []
-          cust_logs = []
+                  page += 1
+                  time.sleep(0.4)
 
-          chunk_size = 5000
-          total = max(
-              1,
-              (latest - deployment_block + chunk_size) // chunk_size
+              return all_logs
+
+          granted = etherscan_logs(
+              signatures["granted"], minter_role
           )
+          revoked = etherscan_logs(
+              signatures["revoked"], minter_role
+          )
+          cust_added = etherscan_logs(signatures["cust_added"])
+          cust_removed = etherscan_logs(signatures["cust_removed"])
 
-          start = deployment_block
-          chunk_number = 0
-
-          while start <= latest:
-              end = min(start + chunk_size - 1, latest)
-              chunk_number += 1
-
-              role_logs.extend(get_logs(
-                  start,
-                  end,
-                  [[granted, revoked], minter_role]
-              ))
-
-              cust_logs.extend(get_logs(
-                  start,
-                  end,
-                  [[cust_added, cust_removed]]
-              ))
-
-              print(
-                  f"Scanned chunk {chunk_number}/{total}: "
-                  f"{start}-{end}; role logs={len(role_logs)}; "
-                  f"custodian logs={len(cust_logs)}",
-                  flush=True
-              )
-
-              start = end + 1
-
-          def log_order(log):
+          def ordered(log):
               return (
                   int(log["blockNumber"], 16),
                   int(log["logIndex"], 16)
@@ -172,44 +187,40 @@ jobs:
 
           minters = set()
 
-          for log in sorted(role_logs, key=log_order):
+          for log in sorted(granted + revoked, key=ordered):
               topics = log.get("topics", [])
-              if len(topics) < 3:
-                  continue
 
-              event = topics[0].lower()
+              if len(topics) < 3:
+                  raise RuntimeError("Unexpected role event format")
+
               account = "0x" + topics[2][-40:]
               account = account.lower()
 
-              if event == granted:
+              if topics[0].lower() == signatures["granted"]:
                   minters.add(account)
-              elif event == revoked:
+              elif topics[0].lower() == signatures["revoked"]:
                   minters.discard(account)
 
           custodians = set()
 
-          for log in sorted(cust_logs, key=log_order):
+          for log in sorted(cust_added + cust_removed, key=ordered):
               topics = log.get("topics", [])
-              if len(topics) < 2:
-                  continue
 
-              event = topics[0].lower()
+              if len(topics) < 2:
+                  raise RuntimeError("Unexpected custodian event format")
+
               account = ("0x" + topics[1][-40:]).lower()
 
-              if event == cust_added:
+              if topics[0].lower() == signatures["cust_added"]:
                   custodians.add(account)
-              elif event == cust_removed:
+              elif topics[0].lower() == signatures["cust_removed"]:
                   custodians.discard(account)
 
           if not minters:
-              raise RuntimeError(
-                  "No MINTER_ROLE holders discovered from events"
-              )
+              raise RuntimeError("No MINTER candidates found")
 
           if not custodians:
-              raise RuntimeError(
-                  "No custodians discovered from events"
-              )
+              raise RuntimeError("No custodian candidates found")
 
           with open("/tmp/p301_minters.txt", "w") as f:
               f.write("\n".join(sorted(minters)) + "\n")
@@ -217,8 +228,8 @@ jobs:
           with open("/tmp/p301_custodians.txt", "w") as f:
               f.write("\n".join(sorted(custodians)) + "\n")
 
-          print("Discovered MINTER candidates:", len(minters), flush=True)
-          print("Discovered CUSTODIAN candidates:", len(custodians), flush=True)
+          print("Minter candidates:", len(minters), flush=True)
+          print("Custodian candidates:", len(custodians), flush=True)
           PY
 
           MINTING="0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3"
@@ -240,10 +251,10 @@ jobs:
             fi
           done < /tmp/p301_minters.txt
 
-          if [ -z "$P30_MINTER" ]; then
-            echo "ERROR: no active MINTER_ROLE holder verified"
+          test -n "$P30_MINTER" || {
+            echo "No active MINTER_ROLE holder verified"
             exit 1
-          fi
+          }
 
           P30_CUSTODIAN=""
 
@@ -260,10 +271,10 @@ jobs:
             fi
           done < /tmp/p301_custodians.txt
 
-          if [ -z "$P30_CUSTODIAN" ]; then
-            echo "ERROR: no active custodian verified"
+          test -n "$P30_CUSTODIAN" || {
+            echo "No active custodian verified"
             exit 1
-          fi
+          }
 
           echo "Verified MINTER: $P30_MINTER"
           echo "Verified CUSTODIAN: $P30_CUSTODIAN"
@@ -291,10 +302,8 @@ jobs:
 
       - name: Verify environment
         run: |
-          set -euo pipefail
           test -n "$P30_MINTER"
           test -n "$P30_CUSTODIAN"
-
           echo "Verified MINTER: $P30_MINTER"
           echo "Verified CUSTODIAN: $P30_CUSTODIAN"
 
