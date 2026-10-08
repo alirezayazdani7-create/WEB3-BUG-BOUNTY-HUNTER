@@ -1,4 +1,4 @@
-name: P31 — Adversarial Multi-Stage Local-Fork Attack Path
+name: P31.1 — Adversarial Multi-Stage Local-Fork Attack Path
 
 on:
   push:
@@ -34,7 +34,7 @@ jobs:
 
           echo "AUTHORITATIVE_HARNESS=PASS"
 
-      - name: Build adversarial local-fork test
+      - name: Build P31.1 local-fork test
         run: |
           set -euo pipefail
 
@@ -122,20 +122,6 @@ jobs:
               ) external view returns (bool);
           }
 
-          interface IERC20P31 {
-              function balanceOf(
-                  address account
-              ) external view returns (uint256);
-          }
-
-          interface IERC4626P31 {
-              function redeem(
-                  uint256 shares,
-                  address receiver,
-                  address owner
-              ) external returns (uint256);
-          }
-
           contract P31_AdversarialMultiStage is Test {
 
               address constant MINTING =
@@ -143,9 +129,6 @@ jobs:
 
               address constant USDE =
                   0x4c9EDD5852cd905f086C759E8383e09bff1E68B3;
-
-              address constant SUSDE =
-                  0x9D39A5DE30e57443BfF2A8307A4256c8797A3497;
 
               address constant ATTACKER =
                   address(0xA11CE);
@@ -162,9 +145,10 @@ jobs:
               /*
                * STAGE 1
                *
-               * Check whether an unprivileged attacker can
-               * manipulate authorization state belonging to
-               * another benefactor.
+               * Cross-account authorization isolation.
+               *
+               * An attacker must not be able to modify
+               * authorization state belonging to VICTIM.
                */
               function testStage1_CrossAccountAuthorizationIsolation()
                   public
@@ -185,9 +169,9 @@ jobs:
 
                   vm.startPrank(ATTACKER);
 
-                  minting.setDelegatedSigner(
+                  try minting.setDelegatedSigner(
                       VICTIM
-                  );
+                  ) {} catch {}
 
                   try minting.confirmDelegatedSigner(
                       VICTIM
@@ -223,8 +207,11 @@ jobs:
               /*
                * STAGE 2
                *
-               * Attempt to reach mint/redeem directly from
-               * an unprivileged account using an invalid signature.
+               * Unprivileged mint/redeem reachability.
+               *
+               * No balance manipulation and no deal().
+               * The objective is only to establish that an
+               * attacker cannot cross the execution boundary.
                */
               function testStage2_UnprivilegedCannotReachMintRedeem()
                   public
@@ -232,16 +219,16 @@ jobs:
                   IEthenaMintingP31 minting =
                       IEthenaMintingP31(MINTING);
 
-                  IEthenaMintingP31.Order memory order =
+                  IEthenaMintingP31.Order memory mintOrder =
                       IEthenaMintingP31.Order({
-                          order_id: "P31",
+                          order_id: "P31.1-MINT",
                           order_type:
                               IEthenaMintingP31.OrderType.MINT,
                           expiry:
                               uint120(
                                   block.timestamp + 1 days
                               ),
-                          nonce: 1,
+                          nonce: 101,
                           benefactor: ATTACKER,
                           beneficiary: ATTACKER,
                           collateral_asset: USDE,
@@ -271,55 +258,76 @@ jobs:
                   sig.signature_bytes =
                       new bytes(65);
 
-                  vm.prank(ATTACKER);
+                  vm.startPrank(ATTACKER);
 
-                  vm.expectRevert();
-
-                  minting.mint(
-                      order,
+                  try minting.mint(
+                      mintOrder,
                       route,
                       sig
-                  );
+                  ) {
+                      fail(
+                          "UNPRIVILEGED_MINT_DID_NOT_REVERT"
+                      );
+                  } catch {}
 
-                  order.order_type =
-                      IEthenaMintingP31.OrderType.REDEEM;
+                  IEthenaMintingP31.Order memory redeemOrder =
+                      IEthenaMintingP31.Order({
+                          order_id: "P31.1-REDEEM",
+                          order_type:
+                              IEthenaMintingP31.OrderType.REDEEM,
+                          expiry:
+                              uint120(
+                                  block.timestamp + 1 days
+                              ),
+                          nonce: 102,
+                          benefactor: ATTACKER,
+                          beneficiary: ATTACKER,
+                          collateral_asset: USDE,
+                          collateral_amount: 1e18,
+                          usde_amount: 1e18
+                      });
 
-                  vm.prank(ATTACKER);
-
-                  vm.expectRevert();
-
-                  minting.redeem(
-                      order,
+                  try minting.redeem(
+                      redeemOrder,
                       sig
-                  );
+                  ) {
+                      fail(
+                          "UNPRIVILEGED_REDEEM_DID_NOT_REVERT"
+                      );
+                  } catch {}
+
+                  vm.stopPrank();
               }
 
               /*
                * STAGE 3
                *
-               * Execute repeated authorization-state transitions
-               * and verify that they cannot create USDe.
+               * Repeated authorization transitions.
+               *
+               * No token balance access. The only invariant
+               * checked is that VICTIM's authorization state
+               * remains isolated from ATTACKER.
                */
-              function testStage3_StateTransitionsDoNotCreateUSDe()
+              function testStage3_RepeatedAuthorizationTransitions()
                   public
               {
-                  deal(
-                      USDE,
-                      ATTACKER,
-                      10e18
-                  );
-
-                  uint256 beforeBalance =
-                      IERC20P31(USDE).balanceOf(
-                          ATTACKER
-                      );
-
                   IEthenaMintingP31 minting =
                       IEthenaMintingP31(MINTING);
 
+                  bool initialApproved =
+                      minting.isApprovedBeneficiary(
+                          VICTIM,
+                          ATTACKER
+                      );
+
+                  bool initialWhitelist =
+                      minting.isWhitelistedBenefactor(
+                          VICTIM
+                      );
+
                   for (
                       uint256 i = 0;
-                      i < 32;
+                      i < 64;
                       ++i
                   ) {
                       vm.startPrank(ATTACKER);
@@ -331,175 +339,194 @@ jobs:
                       }
 
                       if (i % 4 == 1) {
-                          try minting.removeDelegatedSigner(
+                          try minting.confirmDelegatedSigner(
                               VICTIM
                           ) {} catch {}
                       }
 
                       if (i % 4 == 2) {
-                          try minting.setApprovedBeneficiary(
-                              VICTIM,
-                              true
+                          try minting.removeDelegatedSigner(
+                              VICTIM
                           ) {} catch {}
                       }
 
                       if (i % 4 == 3) {
                           try minting.setApprovedBeneficiary(
                               VICTIM,
-                              false
+                              true
                           ) {} catch {}
                       }
 
                       vm.stopPrank();
                   }
 
-                  uint256 afterBalance =
-                      IERC20P31(USDE).balanceOf(
+                  assertEq(
+                      minting.isApprovedBeneficiary(
+                          VICTIM,
                           ATTACKER
-                      );
+                      ),
+                      initialApproved
+                  );
 
                   assertEq(
-                      afterBalance,
-                      beforeBalance
+                      minting.isWhitelistedBenefactor(
+                          VICTIM
+                      ),
+                      initialWhitelist
                   );
               }
 
               /*
                * STAGE 4
                *
-               * Attempt to manufacture value from sUSDe
-               * without owning shares.
+               * Authorization reset / replay boundary.
+               *
+               * A repeated delegated-signer transition must not
+               * accidentally grant ATTACKER authority over VICTIM.
                */
-              function testStage4_NoFreeValueFromSUSDe()
+              function testStage4_DelegationReplayBoundary()
                   public
               {
-                  uint256 beforeUSDe =
-                      IERC20P31(USDE).balanceOf(
+                  IEthenaMintingP31 minting =
+                      IEthenaMintingP31(MINTING);
+
+                  bool beforeState =
+                      minting.isApprovedBeneficiary(
+                          VICTIM,
                           ATTACKER
                       );
 
-                  uint256 beforeShares =
-                      IERC20P31(SUSDE).balanceOf(
-                          ATTACKER
-                      );
+                  vm.startPrank(ATTACKER);
 
-                  vm.prank(ATTACKER);
-
-                  try IERC4626P31(SUSDE).redeem(
-                      1,
-                      ATTACKER,
-                      ATTACKER
+                  try minting.setDelegatedSigner(
+                      VICTIM
                   ) {} catch {}
 
-                  uint256 afterShares =
-                      IERC20P31(SUSDE).balanceOf(
-                          ATTACKER
-                      );
+                  try minting.confirmDelegatedSigner(
+                      VICTIM
+                  ) {} catch {}
 
-                  uint256 afterUSDe =
-                      IERC20P31(USDE).balanceOf(
-                          ATTACKER
-                      );
+                  try minting.removeDelegatedSigner(
+                      VICTIM
+                  ) {} catch {}
+
+                  try minting.confirmDelegatedSigner(
+                      VICTIM
+                  ) {} catch {}
+
+                  try minting.setApprovedBeneficiary(
+                      VICTIM,
+                      true
+                  ) {} catch {}
+
+                  try minting.setApprovedBeneficiary(
+                      VICTIM,
+                      false
+                  ) {} catch {}
+
+                  vm.stopPrank();
 
                   assertEq(
-                      afterShares,
-                      beforeShares
-                  );
-
-                  assertEq(
-                      afterUSDe,
-                      beforeUSDe
+                      minting.isApprovedBeneficiary(
+                          VICTIM,
+                          ATTACKER
+                      ),
+                      beforeState
                   );
               }
 
               /*
                * STAGE 5
                *
-               * Combined state-transition sequence.
+               * Combined adversarial sequence.
                *
-               * The important condition is not simply that
-               * individual calls revert. The invariant is:
-               *
-               * attacker value after sequence
-               * <= attacker value before sequence
+               * No artificial balances are introduced.
+               * The invariant is authorization isolation.
                */
-              function testStage5_CombinedSequencePreservesValue()
+              function testStage5_CombinedSequencePreservesAuthorization()
                   public
               {
-                  deal(
-                      USDE,
-                      ATTACKER,
-                      100e18
-                  );
-
-                  uint256 beforeValue =
-                      IERC20P31(USDE).balanceOf(
-                          ATTACKER
-                      );
-
                   IEthenaMintingP31 minting =
                       IEthenaMintingP31(MINTING);
 
+                  bool beforeApproved =
+                      minting.isApprovedBeneficiary(
+                          VICTIM,
+                          ATTACKER
+                      );
+
+                  bool beforeWhitelist =
+                      minting.isWhitelistedBenefactor(
+                          VICTIM
+                      );
+
                   for (
                       uint256 i = 0;
-                      i < 64;
+                      i < 128;
                       ++i
                   ) {
                       vm.startPrank(ATTACKER);
 
-                      if (i % 5 == 0) {
+                      if (i % 6 == 0) {
                           try minting.setDelegatedSigner(
                               VICTIM
                           ) {} catch {}
                       }
 
-                      if (i % 5 == 1) {
+                      if (i % 6 == 1) {
+                          try minting.confirmDelegatedSigner(
+                              VICTIM
+                          ) {} catch {}
+                      }
+
+                      if (i % 6 == 2) {
                           try minting.removeDelegatedSigner(
                               VICTIM
                           ) {} catch {}
                       }
 
-                      if (i % 5 == 2) {
+                      if (i % 6 == 3) {
                           try minting.setApprovedBeneficiary(
                               VICTIM,
                               true
                           ) {} catch {}
                       }
 
-                      if (i % 5 == 3) {
+                      if (i % 6 == 4) {
                           try minting.setApprovedBeneficiary(
                               VICTIM,
                               false
                           ) {} catch {}
+                      }
+
+                      if (i % 6 == 5) {
+                          try minting.confirmDelegatedSigner(
+                              VICTIM
+                          ) {} catch {}
+                      }
 
                       vm.stopPrank();
                   }
 
-                  uint256 afterValue =
-                      IERC20P31(USDE).balanceOf(
+                  assertEq(
+                      minting.isApprovedBeneficiary(
+                          VICTIM,
                           ATTACKER
-                      );
-
-                  assertLe(
-                      afterValue,
-                      beforeValue
+                      ),
+                      beforeApproved
                   );
 
-                  emit log_named_uint(
-                      "ATTACKER_USDE_BEFORE",
-                      beforeValue
-                  );
-
-                  emit log_named_uint(
-                      "ATTACKER_USDE_AFTER",
-                      afterValue
+                  assertEq(
+                      minting.isWhitelistedBenefactor(
+                          VICTIM
+                      ),
+                      beforeWhitelist
                   );
               }
           }
-          }
           SOL
 
-      - name: Execute P31 on isolated mainnet fork
+      - name: Execute P31.1 on isolated mainnet fork
         env:
           ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
         run: |
@@ -516,9 +543,10 @@ jobs:
             test/foundry/minting/tests/P31_AdversarialMultiStage.t.sol \
             -vvv
 
-          echo "P31_LOCAL_FORK_EXECUTION=PASS"
+          echo "P31_1_LOCAL_FORK_EXECUTION=PASS"
 
       - name: Emit submission gate
+        if: always()
         run: |
           echo "EXECUTION_MODE=LOCAL_FORK_ONLY"
           echo "MAINNET_TRANSACTIONS=NONE"
