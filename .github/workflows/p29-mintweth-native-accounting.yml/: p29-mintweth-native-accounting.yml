@@ -1,0 +1,30 @@
+name: P29 — MintWETH / Native ETH Accounting Diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  p29:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Build
+        run: forge build
+
+      - name: Run P29 diagnostic
+        run: |
+          forge test \
+            --match-contract P29_MintWETHAccountingDiagnostic \
+            -vvv
