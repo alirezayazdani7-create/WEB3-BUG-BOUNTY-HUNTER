@@ -13,22 +13,22 @@ interface IP301AssetCheck {
 
 contract P301MintWETHAccountingDiscoveryTest is Test {
     address constant MINTING =
-        address(uint160(0xe3490297a08d6fc8da46edb7b6142e4f461b62d3));
+        address(bytes20(hex"e3490297a08d6fc8da46edb7b6142e4f461b62d3"));
 
     address constant WETH =
-        address(uint160(0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2));
+        address(bytes20(hex"c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"));
 
     address constant USDC =
-        address(uint160(0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48));
+        address(bytes20(hex"a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"));
 
     address constant USDT =
-        address(uint160(0xdac17f958d2ee523a2206206994597c13d831ec7));
+        address(bytes20(hex"dac17f958d2ee523a2206206994597c13d831ec7"));
 
     address constant DAI =
-        address(uint160(0x6b175474e89094c44da98b954eedeac495271d0f));
+        address(bytes20(hex"6b175474e89094c44da98b954eedeac495271d0f"));
 
     address constant USDE =
-        address(uint160(0x4c9edd5852cd905f086c759e8383e09bff1e68b3));
+        address(bytes20(hex"4c9edd5852cd905f086c759e8383e09bff1e68b3"));
 
     function test_P301_Diagnostic_SupportedAssets()
         external
