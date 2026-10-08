@@ -36,7 +36,7 @@ contract U02PSMStateTransitionProbe is Test {
         0x73E35C5c35A274E34AdE6EB13cC7f62aEE323728;
 
     address constant USDC =
-        0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48;
+        0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48;
 
     function test_U02_UnapprovedBenefactorMustRevert() external {
 
