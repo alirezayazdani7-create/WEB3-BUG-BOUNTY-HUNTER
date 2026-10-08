@@ -75,6 +75,11 @@ interface IMintingP301 {
         view
         returns (bool);
 
+    function isSupportedAsset(address asset)
+        external
+        view
+        returns (bool);
+
     function mintWETH(
         Order calldata order,
         Route calldata route,
@@ -125,7 +130,6 @@ contract P301Valid1271Wallet {
 }
 
 contract P301MintWETHAccountingDiscoveryTest is Test {
-
     address constant MINTING =
         0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3;
 
@@ -174,8 +178,7 @@ contract P301MintWETHAccountingDiscoveryTest is Test {
         view
         returns (address)
     {
-        address minter =
-            vm.envAddress("P30_MINTER");
+        address minter = vm.envAddress("P30_MINTER");
 
         require(
             minter != address(0),
@@ -183,10 +186,7 @@ contract P301MintWETHAccountingDiscoveryTest is Test {
         );
 
         require(
-            target.hasRole(
-                MINTER_ROLE,
-                minter
-            ),
+            target.hasRole(MINTER_ROLE, minter),
             "P301: MINTER_ROLE verification failed"
         );
 
@@ -198,8 +198,7 @@ contract P301MintWETHAccountingDiscoveryTest is Test {
         view
         returns (address)
     {
-        address custodian =
-            vm.envAddress("P30_CUSTODIAN");
+        address custodian = vm.envAddress("P30_CUSTODIAN");
 
         require(
             custodian != address(0),
@@ -241,11 +240,8 @@ contract P301MintWETHAccountingDiscoveryTest is Test {
         view
         returns (IMintingP301.Route memory route)
     {
-        address[] memory addresses =
-            new address[](1);
-
-        uint128[] memory ratios =
-            new uint128[](1);
+        address[] memory addresses = new address[](1);
+        uint128[] memory ratios = new uint128[](1);
 
         addresses[0] = _custodian();
         ratios[0] = 10_000;
@@ -262,17 +258,49 @@ contract P301MintWETHAccountingDiscoveryTest is Test {
         returns (IMintingP301.Signature memory sig)
     {
         sig = IMintingP301.Signature({
-            signature_type:
-                IMintingP301.SignatureType.EIP1271,
+            signature_type: IMintingP301.SignatureType.EIP1271,
             signature_bytes:
                 hex"503330312d574554482d4143434f554e54494e47"
         });
+    }
+
+    // Diagnostic test: must not silently pass when WETH is unsupported.
+    function test_P301_Diagnostic_WETHSupport()
+        external
+    {
+        _fork();
+
+        bool supported = target.isSupportedAsset(WETH);
+
+        emit log_named_uint(
+            "P301 WETH supported (1=yes, 0=no)",
+            supported ? 1 : 0
+        );
+
+        assertTrue(
+            supported,
+            "P301 SETUP INVALID: WETH unsupported at fork block"
+        );
     }
 
     function test_P301_WETH_AccountingInvariant()
         external
     {
         _fork();
+
+        // Preflight check: avoid mistaking an unsupported asset
+        // for an accounting vulnerability.
+        bool wethSupported = target.isSupportedAsset(WETH);
+
+        emit log_named_uint(
+            "P301 WETH supported (1=yes, 0=no)",
+            wethSupported ? 1 : 0
+        );
+
+        assertTrue(
+            wethSupported,
+            "P301 SETUP INVALID: WETH unsupported at fork block"
+        );
 
         address minter = _minter();
         address custodian = _custodian();
@@ -291,26 +319,16 @@ contract P301MintWETHAccountingDiscoveryTest is Test {
             new P301Valid1271Wallet();
 
         vm.prank(target.owner());
-
-        target.addWhitelistedBenefactor(
-            address(wallet)
-        );
+        target.addWhitelistedBenefactor(address(wallet));
 
         uint256 collateral = 1 ether;
         uint256 usdeAmount = 1 ether;
 
-        vm.deal(
-            address(wallet),
-            collateral
-        );
+        vm.deal(address(wallet), collateral);
 
-        wallet.executeValue{
-            value: collateral
-        }(
+        wallet.executeValue{value: collateral}(
             WETH,
-            abi.encodeWithSelector(
-                IWETHP301.deposit.selector
-            )
+            abi.encodeWithSelector(IWETHP301.deposit.selector)
         );
 
         wallet.execute(
@@ -335,25 +353,17 @@ contract P301MintWETHAccountingDiscoveryTest is Test {
                 uint128(usdeAmount)
             );
 
-        wallet.setApprovedDigest(
-            target.hashOrder(order)
-        );
+        wallet.setApprovedDigest(target.hashOrder(order));
 
-        IMintingP301.Route memory route =
-            _route();
-
-        IMintingP301.Signature memory sig =
-            _signature();
+        IMintingP301.Route memory route = _route();
+        IMintingP301.Signature memory sig = _signature();
 
         assertTrue(
             target.verifyRoute(route),
             "P301: valid route rejected"
         );
 
-        target.verifyOrder(
-            order,
-            sig
-        );
+        target.verifyOrder(order, sig);
 
         uint256 wethBefore =
             weth.balanceOf(address(wallet));
@@ -366,11 +376,7 @@ contract P301MintWETHAccountingDiscoveryTest is Test {
 
         vm.prank(minter);
 
-        target.mintWETH(
-            order,
-            route,
-            sig
-        );
+        target.mintWETH(order, route, sig);
 
         uint256 wethAfter =
             weth.balanceOf(address(wallet));
