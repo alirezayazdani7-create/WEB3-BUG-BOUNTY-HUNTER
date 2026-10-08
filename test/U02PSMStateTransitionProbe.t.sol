@@ -36,7 +36,7 @@ contract U02PSMStateTransitionProbe is Test {
         0x73E35C5c35A274E34AdE6EB13cC7f62aEE323728;
 
     address constant USDC =
-        0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48;
+        0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48;
 
     function test_U02_UnapprovedBenefactorMustRevert() external {
 
@@ -57,8 +57,11 @@ contract U02PSMStateTransitionProbe is Test {
             "U02: no USDC bytecode"
         );
 
-        address attacker = address(0xCAFE1234);
-        address benefactor = address(0xABCD1234);
+        address attacker =
+            address(0xCAFE1234);
+
+        address benefactor =
+            address(0xABCD1234);
 
         (
             bool active,
@@ -66,7 +69,9 @@ contract U02PSMStateTransitionProbe is Test {
             ,
             ,
             
-        ) = t.getBenefactorConfig(benefactor);
+        ) = t.getBenefactorConfig(
+            benefactor
+        );
 
         require(
             !active,
