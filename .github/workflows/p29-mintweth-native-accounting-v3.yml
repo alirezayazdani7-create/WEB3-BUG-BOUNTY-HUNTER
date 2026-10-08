@@ -1,0 +1,93 @@
+name: P29 V3 — MintWETH Native ETH Source Diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/p29-mintweth-native-accounting-v3.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  p29-source-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch authoritative live EthenaMinting V2 source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p evidence
+
+          curl -fsSL \
+            "https://raw.githubusercontent.com/chrispyspearbit/ethena-audit-package/main/package/live-targets/EthenaMinting_V2/sources/contracts/EthenaMinting.sol" \
+            -o evidence/EthenaMinting.sol
+
+          sha256sum evidence/EthenaMinting.sol | tee evidence/source.sha256
+
+      - name: Verify exact MintWETH and native redemption gates
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          f="evidence/EthenaMinting.sol"
+
+          grep -Fq "function mintWETH(" "$f"
+          grep -Fq 'asset != address(WETH)' "$f"
+          grep -Fq 'asset == NATIVE_TOKEN' "$f"
+          grep -Fq 'WETH.withdraw(amount)' "$f"
+          grep -Fq 'if (address(this).balance < amount) revert InvalidAmount();' "$f"
+
+          echo "P29_SOURCE_GATES=PASS"
+
+      - name: Check accounting sequence around mintWETH
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          f="evidence/EthenaMinting.sol"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          s = Path("evidence/EthenaMinting.sol").read_text()
+
+          a = s.index("function mintWETH(")
+          b = s.index("function redeem(", a)
+
+          block = s[a:b]
+
+          required = [
+              "belowMaxMintPerBlock(order.usde_amount, order.collateral_asset)",
+              "belowGlobalMaxMintPerBlock(order.usde_amount)",
+              "_deduplicateOrder(order.benefactor, order.nonce)",
+              "totalPerBlockPerAsset[block.number][order.collateral_asset].mintedPerBlock += order.usde_amount",
+              "totalPerBlock[block.number].mintedPerBlock += order.usde_amount",
+              "_transferEthCollateral(",
+              "usde.mint(order.beneficiary, order.usde_amount)"
+          ]
+
+          missing = [x for x in required if x not in block]
+
+          if missing:
+              print("MISSING_EXPECTED_LINES")
+
+              for x in missing:
+                  print(x)
+
+              raise SystemExit(1)
+
+          print("P29_ACCOUNTING_SEQUENCE=PASS")
+          PY
+
+      - name: Upload forensic evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: p29-native-eth-source-evidence
+          path: evidence/
