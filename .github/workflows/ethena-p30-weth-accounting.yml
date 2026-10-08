@@ -1,0 +1,53 @@
+name: Ethena P30 WETH Accounting Invariant
+
+on:
+  workflow_dispatch:
+
+jobs:
+  p30-accounting:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Create isolated Foundry project
+        run: |
+          rm -rf /tmp/p30
+          mkdir -p /tmp/p30
+          cd /tmp/p30
+
+          forge init --force .
+
+          rm -rf test
+          mkdir -p test
+
+          cp "$GITHUB_WORKSPACE/test/P30_MintWETHAccountingInvariant.t.sol" \
+             test/P30_MintWETHAccountingInvariant.t.sol
+
+          forge install foundry-rs/forge-std --no-commit
+
+      - name: Verify test file
+        working-directory: /tmp/p30
+        run: |
+          test -f test/P30_MintWETHAccountingInvariant.t.sol
+          echo "P30 test file found"
+
+      - name: Run P30
+        working-directory: /tmp/p30
+        env:
+          ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
+        run: |
+          forge test \
+            --match-contract P30MintWETHAccountingInvariantTest \
+            -vvv
+
+      - name: Completion
+        if: success()
+        run: |
+          echo "P30 STATUS: TESTS PASSED"
+          echo "GREEN DOES NOT MEAN VULNERABILITY ABSENCE."
+          echo "A FINDING REQUIRES REPRODUCIBLE UNAUTHORIZED ECONOMIC IMPACT."
