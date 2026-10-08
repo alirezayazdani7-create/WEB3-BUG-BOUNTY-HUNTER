@@ -3,216 +3,200 @@ pragma solidity ^0.8.26;
 
 import "forge-std/Test.sol";
 
-interface IERC20View {
+interface IERC20U03 {
     function totalSupply() external view returns (uint256);
-    function balanceOf(address) external view returns (uint256);
+    function balanceOf(address account) external view returns (uint256);
 }
 
-/*
- * U03 — USDtbMinting <-> USDtb PSM Cross-Contract Invariant Probe
- *
- * PURPOSE:
- *   Local-fork-only diagnostic harness.
- *   This test does NOT claim a vulnerability.
- *
- * REQUIRED ENV VARS:
- *   ETHENA_FORK_RPC
- *   U03_PSM
- *   U03_USDTB
- *   U03_COLLATERAL
- *   U03_SWAP_CALL
- *
- * SAFETY:
- *   - No broadcast.
- *   - No live transaction.
- *   - Execution occurs only inside a Foundry local fork.
- *   - Do not point this at a live execution/broadcast path.
- *
- * IMPORTANT:
- *   The current USDtb PSM ABI has not been independently established
- *   in this repository. Therefore the test deliberately accepts generic
- *   ABI-encoded calldata instead of inventing a function signature.
- */
+interface IPSMU03 {
+    struct Order {
+        bool isSwapForAsset;
+        uint120 expiry;
+        uint128 nonce;
+        uint256 chainId;
+        address benefactor;
+        address beneficiary;
+        address collateral;
+        uint128 amountIn;
+        uint128 minAmountOut;
+    }
+
+    function getBenefactorConfig(address)
+        external
+        view
+        returns (
+            bool,
+            uint128,
+            uint128,
+            uint128,
+            uint128
+        );
+
+    function swap(Order calldata) external;
+}
 
 contract U03CrossContractInvariantProbe is Test {
 
-    function test_U03_LocalFork_PSMAccountingProbe() external {
+    address constant PSM =
+        address(
+            bytes20(
+                hex"73E35C5c35A274E34AdE6EB13cC7f62aEE323728"
+            )
+        );
 
-        string memory rpc = vm.envString("ETHENA_FORK_RPC");
+    address constant USDTB =
+        address(
+            bytes20(
+                hex"c139190f447e929f090edb554d95abb8b18ac1c"
+            )
+        );
 
-        address psm =
-            vm.envAddress("U03_PSM");
+    address constant USDC =
+        address(
+            bytes20(
+                hex"A0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+            )
+        );
 
-        address usdtb =
-            vm.envAddress("U03_USDTB");
 
-        address collateral =
-            vm.envAddress("U03_COLLATERAL");
+    function _fork() internal {
 
-        bytes memory callData =
-            vm.envBytes("U03_SWAP_CALL");
+        uint256 forkId =
+            vm.createFork(
+                vm.envString("ETHENA_FORK_RPC")
+            );
+
+        vm.selectFork(forkId);
 
         require(
-            psm.code.length > 0,
+            PSM.code.length > 0,
             "U03: PSM has no bytecode"
         );
 
         require(
-            usdtb.code.length > 0,
+            USDTB.code.length > 0,
             "U03: USDtb has no bytecode"
         );
 
         require(
-            collateral.code.length > 0,
-            "U03: collateral has no bytecode"
+            USDC.code.length > 0,
+            "U03: USDC has no bytecode"
+        );
+    }
+
+
+    function test_U03_PSMAuthorizationAndStateIsolation()
+        external
+    {
+        _fork();
+
+        IPSMU03 psm =
+            IPSMU03(PSM);
+
+        address attacker =
+            address(0xCAFE1234);
+
+        address benefactor =
+            address(0xABCD1234);
+
+        address beneficiary =
+            address(0xBEEF5678);
+
+
+        (
+            bool active,
+            ,
+            ,
+            ,
+            
+        ) =
+            psm.getBenefactorConfig(
+                benefactor
+            );
+
+
+        require(
+            !active,
+            "U03 fixture collision"
+        );
+
+
+        uint256 supplyBefore =
+            IERC20U03(USDTB).totalSupply();
+
+        uint256 psmUsdtbBefore =
+            IERC20U03(USDTB).balanceOf(PSM);
+
+        uint256 psmUsdcBefore =
+            IERC20U03(USDC).balanceOf(PSM);
+
+
+        IPSMU03.Order memory order =
+            IPSMU03.Order(
+                true,
+                uint120(
+                    block.timestamp + 1 days
+                ),
+                777,
+                block.chainid,
+                benefactor,
+                beneficiary,
+                USDC,
+                1,
+                1
+            );
+
+
+        vm.prank(attacker);
+
+        vm.expectRevert();
+
+        psm.swap(order);
+
+
+        uint256 supplyAfter =
+            IERC20U03(USDTB).totalSupply();
+
+        uint256 psmUsdtbAfter =
+            IERC20U03(USDTB).balanceOf(PSM);
+
+        uint256 psmUsdcAfter =
+            IERC20U03(USDC).balanceOf(PSM);
+
+
+        require(
+            supplyAfter == supplyBefore,
+            "U03 ALERT: unauthorized path changed USDtb supply"
         );
 
         require(
-            callData.length >= 4,
-            "U03: missing calldata"
+            psmUsdtbAfter == psmUsdtbBefore,
+            "U03 ALERT: unauthorized path changed PSM USDtb balance"
         );
 
-        /*
-         * Create an isolated local fork.
-         *
-         * Nothing here broadcasts a transaction.
-         */
-        uint256 forkId =
-            vm.createFork(rpc);
-
-        vm.selectFork(forkId);
-
-        /*
-         * Capture state BEFORE the simulated PSM call.
-         */
-        uint256 supplyBefore =
-            IERC20View(usdtb).totalSupply();
-
-        uint256 psmUsdTbBefore =
-            IERC20View(usdtb).balanceOf(psm);
-
-        uint256 psmCollateralBefore =
-            IERC20View(collateral).balanceOf(psm);
-
-        emit log_named_uint(
-            "U03 supplyBefore",
-            supplyBefore
+        require(
+            psmUsdcAfter == psmUsdcBefore,
+            "U03 ALERT: unauthorized path changed PSM collateral balance"
         );
 
-        emit log_named_uint(
-            "U03 psmUsdTbBefore",
-            psmUsdTbBefore
-        );
-
-        emit log_named_uint(
-            "U03 psmCollateralBefore",
-            psmCollateralBefore
-        );
-
-        /*
-         * Execute the supplied PSM call ONLY inside the local fork.
-         */
-        (bool ok, bytes memory ret) =
-            psm.call(callData);
-
-        /*
-         * Revert is not automatically a vulnerability.
-         * We simply record it as a failed transition.
-         */
-        if (!ok) {
-
-            emit log(
-                "U03 RESULT: supplied PSM call reverted on local fork"
-            );
-
-            emit log_bytes(ret);
-
-            return;
-        }
-
-        /*
-         * Capture state AFTER the simulated transition.
-         */
-        uint256 supplyAfter =
-            IERC20View(usdtb).totalSupply();
-
-        uint256 psmUsdTbAfter =
-            IERC20View(usdtb).balanceOf(psm);
-
-        uint256 psmCollateralAfter =
-            IERC20View(collateral).balanceOf(psm);
-
-        emit log_named_uint(
-            "U03 supplyAfter",
-            supplyAfter
-        );
-
-        emit log_named_uint(
-            "U03 psmUsdTbAfter",
-            psmUsdTbAfter
-        );
-
-        emit log_named_uint(
-            "U03 psmCollateralAfter",
-            psmCollateralAfter
-        );
-
-        /*
-         * Core diagnostic invariant:
-         *
-         * If the PSM increases USDtb total supply,
-         * there should be a corresponding collateral-side
-         * accounting transition.
-         *
-         * This is only a diagnostic invariant.
-         * It is NOT by itself sufficient to establish
-         * a bounty-eligible vulnerability.
-         */
-        if (supplyAfter > supplyBefore) {
-
-            uint256 supplyDelta =
-                supplyAfter - supplyBefore;
-
-            uint256 collateralIncrease = 0;
-
-            if (
-                psmCollateralAfter >
-                psmCollateralBefore
-            ) {
-
-                collateralIncrease =
-                    psmCollateralAfter -
-                    psmCollateralBefore;
-            }
-
-            emit log_named_uint(
-                "U03 supplyDelta",
-                supplyDelta
-            );
-
-            emit log_named_uint(
-                "U03 collateralIncrease",
-                collateralIncrease
-            );
-
-            /*
-             * If this fails, investigate the exact transition.
-             *
-             * It is NOT yet a confirmed vulnerability.
-             */
-            assertGt(
-                collateralIncrease,
-                0,
-                "U03 ALERT: USDtb supply increased without PSM collateral increase"
-            );
-        }
 
         emit log(
-            "U03 RESULT: local-fork accounting transition completed"
+            "U03 STATUS: UNAUTHORIZED CROSS-CONTRACT STATE TRANSITION BLOCKED"
         );
 
-        emit log(
-            "U03 STATUS: DIAGNOSTIC_ONLY_NOT_A_CONFIRMED_FINDING"
+        emit log_named_uint(
+            "U03 USDtb supply delta",
+            supplyAfter - supplyBefore
+        );
+
+        emit log_named_uint(
+            "U03 PSM USDtb balance delta",
+            psmUsdtbAfter - psmUsdtbBefore
+        );
+
+        emit log_named_uint(
+            "U03 PSM USDC balance delta",
+            psmUsdcAfter - psmUsdcBefore
         );
     }
 }
