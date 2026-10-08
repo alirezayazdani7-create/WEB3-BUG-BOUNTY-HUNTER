@@ -1,27 +1,33 @@
-name: Ethena U03 Cross Contract
+name: Ethena U01 USDtb Minting
 
 on:
   workflow_dispatch:
 
 jobs:
-  u03:
+  u01:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
+      - uses: foundry-rs/foundry-toolchain@v1
 
-      - name: Run U03
+      - name: Create isolated Foundry project
+        run: |
+          rm -rf /tmp/u01
+          mkdir -p /tmp/u01
+          cd /tmp/u01
+          forge init --force .
+          rm -rf test
+          mkdir test
+          cp "$GITHUB_WORKSPACE/test/U01USDtbMintingProbe.t.sol" test/
+          forge install foundry-rs/forge-std --no-commit
+
+      - name: Run U01
+        working-directory: /tmp/u01
         env:
           ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
-          U03_PSM: ${{ secrets.U03_PSM }}
-          U03_USDTB: ${{ secrets.U03_USDTB }}
-          U03_COLLATERAL: ${{ secrets.U03_COLLATERAL }}
-          U03_SWAP_CALL: ${{ secrets.U03_SWAP_CALL }}
         run: |
           forge test \
-            --match-contract U03CrossContractInvariantProbe \
+            --match-contract U01USDtbMintingProbe \
             -vvv
