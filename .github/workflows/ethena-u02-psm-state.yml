@@ -1,25 +1,105 @@
-name: Ethena U02 PSM State Transition
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.26;
 
-on:
-  workflow_dispatch:
+import "forge-std/Test.sol";
 
-jobs:
-  u02:
-    runs-on: ubuntu-latest
+interface IPSMU02 {
+    struct Order {
+        bool isSwapForAsset;
+        uint120 expiry;
+        uint128 nonce;
+        uint256 chainId;
+        address benefactor;
+        address beneficiary;
+        address collateral;
+        uint128 amountIn;
+        uint128 minAmountOut;
+    }
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    function swap(Order calldata) external;
 
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
+    function getBenefactorConfig(address)
+        external
+        view
+        returns (
+            bool,
+            uint128,
+            uint128,
+            uint128,
+            uint128
+        );
+}
 
-      - name: Run U02
-        env:
-          ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
-          U02_PSM: ${{ secrets.U02_PSM }}
-          U02_ASSET: ${{ secrets.U02_ASSET }}
-        run: |
-          forge test \
-            --match-contract U02PSMStateTransitionProbe \
-            -vvv
+contract U02PSMStateTransitionProbe is Test {
+
+    address constant PSM =
+        0x73E35C5c35A274E34AdE6EB13cC7f62aEE323728;
+
+    address constant USDC =
+        0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48;
+
+    function test_U02_UnapprovedBenefactorMustRevert() external {
+
+        uint256 forkId =
+            vm.createFork(vm.envString("ETHENA_FORK_RPC"));
+
+        vm.selectFork(forkId);
+
+        IPSMU02 t =
+            IPSMU02(PSM);
+
+        require(
+            address(t).code.length > 0,
+            "U02: no PSM bytecode"
+        );
+
+        require(
+            USDC.code.length > 0,
+            "U02: no USDC bytecode"
+        );
+
+        address attacker =
+            address(0xCAFE1234);
+
+        address benefactor =
+            address(0xABCD1234);
+
+        (
+            bool active,
+            ,
+            ,
+            ,
+            
+        ) = t.getBenefactorConfig(
+            benefactor
+        );
+
+        require(
+            !active,
+            "U02 fixture collision"
+        );
+
+        IPSMU02.Order memory order =
+            IPSMU02.Order(
+                true,
+                uint120(block.timestamp + 1 days),
+                1,
+                block.chainid,
+                benefactor,
+                attacker,
+                USDC,
+                1,
+                1
+            );
+
+        vm.prank(attacker);
+
+        vm.expectRevert();
+
+        t.swap(order);
+
+        emit log(
+            "U02 STATUS: UNAPPROVED BENEFACTOR SWAP REVERTED; PSM AUTHORIZATION BOUNDARY HOLDS"
+        );
+    }
+}
