@@ -1,0 +1,25 @@
+name: Ethena U02 PSM State Transition
+
+on:
+  workflow_dispatch:
+
+jobs:
+  u02:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Run U02
+        env:
+          ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
+          U02_PSM: ${{ secrets.U02_PSM }}
+          U02_ASSET: ${{ secrets.U02_ASSET }}
+        run: |
+          forge test \
+            --match-contract U02PSMStateTransitionProbe \
+            -vvv
