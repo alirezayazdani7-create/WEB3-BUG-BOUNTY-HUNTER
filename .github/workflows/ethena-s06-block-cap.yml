@@ -1,0 +1,35 @@
+name: Ethena S06 Block Cap
+
+on:
+  workflow_dispatch:
+
+jobs:
+  s06:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Create isolated Foundry project
+        run: |
+          rm -rf /tmp/s06
+          mkdir -p /tmp/s06
+          cd /tmp/s06
+          forge init --force .
+          rm -rf test
+          mkdir -p test
+          cp "$GITHUB_WORKSPACE/test/MintingV2S06BlockCap.t.sol" test/
+          forge install foundry-rs/forge-std --no-commit
+
+      - name: Run S06
+        working-directory: /tmp/s06
+        env:
+          ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
+        run: |
+          forge test \
+            --match-contract MintingV2S06BlockCapTest \
+            -vvv
