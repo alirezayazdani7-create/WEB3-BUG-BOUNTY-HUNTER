@@ -3,129 +3,297 @@ pragma solidity ^0.8.26;
 
 import "forge-std/Test.sol";
 
-interface IERC20Like {
-    function balanceOf(address account) external view returns (uint256);
-    function totalSupply() external view returns (uint256);
+interface IUSDtbMintingS08 {
+    struct TokenConfig {
+        uint8 tokenType;
+        bool isActive;
+        uint128 maxMintPerBlock;
+        uint128 maxRedeemPerBlock;
+    }
+
+    function owner() external view returns (address);
+
+    function tokenConfig(address asset) external view returns (
+        uint8 tokenType,
+        bool isActive,
+        uint128 maxMintPerBlock,
+        uint128 maxRedeemPerBlock
+    );
+
+    function isSupportedAsset(address asset) external view returns (bool);
+
+    function removeSupportedAsset(address asset) external;
+
+    function addSupportedAsset(
+        address asset,
+        TokenConfig calldata cfg
+    ) external;
+
+    function totalPerBlock(uint256 blockNumber)
+        external
+        view
+        returns (uint128 minted, uint128 redeemed);
+
+    function totalPerBlockPerAsset(
+        uint256 blockNumber,
+        address asset
+    )
+        external
+        view
+        returns (uint128 minted, uint128 redeemed);
 }
 
 contract EthenaS08TokenConfigLifecycle is Test {
-    address constant ATTACKER = address(0xA11CE);
 
-    /*
-     * S08 OBJECTIVE
-     *
-     * Test remove -> re-add / configuration lifecycle on an isolated fork.
-     *
-     * We are NOT testing:
-     * - known FULL_RESTRICTED approval bypass
-     * - known benefactor re-add resurrection
-     * - known unsafe downcast
-     * - live/mainnet execution
-     *
-     * We are looking specifically for a NEW invariant break where:
-     *
-     *   removeSupportedAsset(asset)
-     *          ->
-     *   addSupportedAsset(asset)
-     *
-     * leaves stale state that an UNPRIVILEGED attacker can exploit.
-     *
-     * Candidate stale state:
-     * - oracle configuration
-     * - mint/redeem limits
-     * - fee configuration
-     * - custodian mapping
-     * - asset enabled state
-     * - decimal/scaling configuration
-     * - authorization state
-     */
+    address constant USDtb_MINTING =
+        0xa3DDBf92077b850E29C4805Df0a2459Ae048416a;
 
-    function test_S08_RemoveReadd_StaleStateProbe() external {
+    function test_S08_RemoveReadd_StateTransition() external {
+
         string memory rpc = vm.envString("ETHENA_FORK_RPC");
-
-        address target = vm.envAddress("S08_TARGET");
-        address asset = vm.envAddress("S08_ASSET");
-
-        require(target.code.length > 0, "S08: target has no bytecode");
-        require(asset.code.length > 0, "S08: asset has no bytecode");
 
         uint256 forkId = vm.createFork(rpc);
         vm.selectFork(forkId);
 
-        emit log("S08: isolated fork selected");
-        emit log_named_address("S08 target", target);
-        emit log_named_address("S08 asset", asset);
+        IUSDtbMintingS08 target =
+            IUSDtbMintingS08(USDtb_MINTING);
 
-        /*
-         * Snapshot state before attempting any lifecycle transition.
-         */
-        uint256 supplyBefore = IERC20Like(asset).totalSupply();
-        uint256 attackerBefore = IERC20Like(asset).balanceOf(ATTACKER);
+        address asset =
+            vm.envAddress("S08_ASSET");
 
-        emit log_named_uint("S08 asset supply before", supplyBefore);
-        emit log_named_uint("S08 attacker balance before", attackerBefore);
+        require(
+            asset.code.length > 0,
+            "S08: asset has no bytecode"
+        );
 
-        /*
-         * IMPORTANT:
-         *
-         * We intentionally do NOT impersonate an admin here.
-         *
-         * The first question is whether an unprivileged caller can
-         * directly trigger a lifecycle transition or otherwise reach
-         * stale configuration.
-         */
-        vm.prank(ATTACKER);
+        require(
+            address(target).code.length > 0,
+            "S08: target has no bytecode"
+        );
 
-        (bool ok, bytes memory ret) =
-            target.call(
-                abi.encodeWithSignature(
-                    "removeSupportedAsset(address)",
-                    asset
-                )
-            );
+        (
+            uint8 tokenTypeBefore,
+            bool activeBefore,
+            uint128 maxMintBefore,
+            uint128 maxRedeemBefore
+        ) = target.tokenConfig(asset);
 
-        if (ok) {
-            emit log(
-                "S08 ALERT: unprivileged caller reached removeSupportedAsset"
-            );
-        } else {
-            emit log(
-                "S08: removeSupportedAsset correctly rejected unprivileged caller"
-            );
-            emit log_bytes(ret);
-        }
+        bool supportedBefore =
+            target.isSupportedAsset(asset);
 
-        /*
-         * No vulnerability is claimed merely because the call succeeds
-         * or fails. We need a complete permissionless value-impact path.
-         */
-        uint256 supplyAfter = IERC20Like(asset).totalSupply();
-        uint256 attackerAfter = IERC20Like(asset).balanceOf(ATTACKER);
+        address admin = target.owner();
 
-        emit log_named_uint(
-            "S08 asset supply after",
-            supplyAfter
+        require(
+            supportedBefore,
+            "S08: selected asset is not currently supported"
+        );
+
+        emit log_named_address(
+            "S08 target",
+            address(target)
+        );
+
+        emit log_named_address(
+            "S08 asset",
+            asset
+        );
+
+        emit log_named_address(
+            "S08 owner",
+            admin
         );
 
         emit log_named_uint(
-            "S08 attacker balance after",
-            attackerAfter
+            "S08 tokenType before",
+            tokenTypeBefore
         );
 
-        if (attackerAfter > attackerBefore) {
-            emit log(
-                "S08 ALERT: attacker balance increased"
-            );
-        }
+        emit log_named_uint(
+            "S08 active before",
+            activeBefore ? 1 : 0
+        );
 
-        if (supplyAfter != supplyBefore) {
-            emit log(
-                "S08: token supply changed during lifecycle probe"
-            );
-        }
+        emit log_named_uint(
+            "S08 maxMint before",
+            maxMintBefore
+        );
+
+        emit log_named_uint(
+            "S08 maxRedeem before",
+            maxRedeemBefore
+        );
+
+        uint256 blockBefore = block.number;
+
+        (
+            uint128 globalMintBefore,
+            uint128 globalRedeemBefore
+        ) = target.totalPerBlock(blockBefore);
+
+        (
+            uint128 assetMintBefore,
+            uint128 assetRedeemBefore
+        ) = target.totalPerBlockPerAsset(
+            blockBefore,
+            asset
+        );
+
+        // Isolated fork only.
+        // No mainnet transaction is performed.
+
+        vm.prank(admin);
+
+        target.removeSupportedAsset(asset);
+
+        bool supportedRemoved =
+            target.isSupportedAsset(asset);
+
+        (
+            uint8 tokenTypeRemoved,
+            bool activeRemoved,
+            uint128 maxMintRemoved,
+            uint128 maxRedeemRemoved
+        ) = target.tokenConfig(asset);
+
+        emit log_named_uint(
+            "S08 supported after remove",
+            supportedRemoved ? 1 : 0
+        );
+
+        emit log_named_uint(
+            "S08 tokenType after remove",
+            tokenTypeRemoved
+        );
+
+        emit log_named_uint(
+            "S08 active after remove",
+            activeRemoved ? 1 : 0
+        );
+
+        emit log_named_uint(
+            "S08 maxMint after remove",
+            maxMintRemoved
+        );
+
+        emit log_named_uint(
+            "S08 maxRedeem after remove",
+            maxRedeemRemoved
+        );
+
+        IUSDtbMintingS08.TokenConfig memory originalConfig =
+            IUSDtbMintingS08.TokenConfig({
+                tokenType: tokenTypeBefore,
+                isActive: activeBefore,
+                maxMintPerBlock: maxMintBefore,
+                maxRedeemPerBlock: maxRedeemBefore
+            });
+
+        vm.prank(admin);
+
+        target.addSupportedAsset(
+            asset,
+            originalConfig
+        );
+
+        (
+            uint8 tokenTypeAfter,
+            bool activeAfter,
+            uint128 maxMintAfter,
+            uint128 maxRedeemAfter
+        ) = target.tokenConfig(asset);
+
+        bool supportedAfter =
+            target.isSupportedAsset(asset);
+
+        (
+            uint128 globalMintAfter,
+            uint128 globalRedeemAfter
+        ) = target.totalPerBlock(blockBefore);
+
+        (
+            uint128 assetMintAfter,
+            uint128 assetRedeemAfter
+        ) = target.totalPerBlockPerAsset(
+            blockBefore,
+            asset
+        );
+
+        emit log_named_uint(
+            "S08 supported after re-add",
+            supportedAfter ? 1 : 0
+        );
+
+        emit log_named_uint(
+            "S08 tokenType after re-add",
+            tokenTypeAfter
+        );
+
+        emit log_named_uint(
+            "S08 active after re-add",
+            activeAfter ? 1 : 0
+        );
+
+        emit log_named_uint(
+            "S08 maxMint after re-add",
+            maxMintAfter
+        );
+
+        emit log_named_uint(
+            "S08 maxRedeem after re-add",
+            maxRedeemAfter
+        );
+
+        emit log_named_uint(
+            "S08 global mint counter delta",
+            uint256(globalMintAfter)
+                - uint256(globalMintBefore)
+        );
+
+        emit log_named_uint(
+            "S08 global redeem counter delta",
+            uint256(globalRedeemAfter)
+                - uint256(globalRedeemBefore)
+        );
+
+        emit log_named_uint(
+            "S08 asset mint counter delta",
+            uint256(assetMintAfter)
+                - uint256(assetMintBefore)
+        );
+
+        emit log_named_uint(
+            "S08 asset redeem counter delta",
+            uint256(assetRedeemAfter)
+                - uint256(assetRedeemBefore)
+        );
+
+        require(
+            supportedAfter,
+            "S08: asset failed to re-add"
+        );
+
+        require(
+            tokenTypeAfter == tokenTypeBefore,
+            "S08: token type changed"
+        );
+
+        require(
+            activeAfter == activeBefore,
+            "S08: active state changed"
+        );
+
+        require(
+            maxMintAfter == maxMintBefore,
+            "S08: mint limit changed"
+        );
+
+        require(
+            maxRedeemAfter == maxRedeemBefore,
+            "S08: redeem limit changed"
+        );
 
         emit log(
-            "S08 STATUS: TRIAGE_ONLY — EXACT CURRENT ABI/STATE TRANSITION REQUIRED"
+            "S08 STATUS: STATE-TRANSITION OBSERVATION ONLY; PERMISSIONLESS IMPACT NOT DEMONSTRATED"
         );
     }
 }
