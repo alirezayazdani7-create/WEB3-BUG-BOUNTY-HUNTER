@@ -21,106 +21,85 @@ interface IPSMU03 {
         uint128 minAmountOut;
     }
 
-    function getBenefactorConfig(address)
+    function getBenefactorConfig(address benefactor)
         external
         view
         returns (
-            bool,
-            uint128,
-            uint128,
-            uint128,
-            uint128
+            bool active,
+            uint128 maxSwapForAssetPerEpoch,
+            uint128 maxSwapForCollateralPerEpoch,
+            uint128 maxSwapForAssetPerPeriod,
+            uint128 maxSwapForCollateralPerPeriod
         );
 
-    function swap(Order calldata) external;
+    function swap(Order calldata order) external;
 }
 
 contract U03CrossContractInvariantProbe is Test {
 
+    // Ethena USDtb PSM
     address constant PSM =
-        address(
-            bytes20(
-                hex"73E35C5c35A274E34AdE6EB13cC7f62aEE323728"
-            )
-        );
+        address(bytes20(hex"73E35C5c35A274E34AdE6EB13cC7f62aEE323728"));
 
+    // USDtb — CORRECT ADDRESS
     address constant USDTB =
-        address(
-            bytes20(
-                hex"c139190f447e929f090edb554d95abb8b18ac1c"
-            )
-        );
+        address(bytes20(hex"c139190f447e929f090edeb554d95abb8b18ac1c"));
 
+    // Ethereum USDC
     address constant USDC =
-        address(
-            bytes20(
-                hex"A0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
-            )
-        );
-
+        address(bytes20(hex"A0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"));
 
     function _fork() internal {
-
-        uint256 forkId =
-            vm.createFork(
-                vm.envString("ETHENA_FORK_RPC")
-            );
+        uint256 forkId = vm.createFork(
+            vm.envString("ETHENA_FORK_RPC")
+        );
 
         vm.selectFork(forkId);
 
         require(
-            PSM.code.length > 0,
-            "U03: PSM has no bytecode"
+            address(PSM).code.length > 0,
+            "U03: PSM bytecode missing"
         );
 
         require(
-            USDTB.code.length > 0,
-            "U03: USDtb has no bytecode"
+            address(USDTB).code.length > 0,
+            "U03: USDtb bytecode missing"
         );
 
         require(
-            USDC.code.length > 0,
-            "U03: USDC has no bytecode"
+            address(USDC).code.length > 0,
+            "U03: USDC bytecode missing"
         );
     }
 
+    function test_U03_PSMAuthorizationAndStateIsolation() external {
 
-    function test_U03_PSMAuthorizationAndStateIsolation()
-        external
-    {
         _fork();
 
-        IPSMU03 psm =
-            IPSMU03(PSM);
+        IPSMU03 psm = IPSMU03(PSM);
 
-        address attacker =
-            address(0xCAFE1234);
+        // Completely unprivileged attacker
+        address attacker = address(0xCAFE1234);
 
-        address benefactor =
-            address(0xABCD1234);
+        // Arbitrary benefactor used only as a clean fixture
+        address benefactor = address(0xABCD1234);
 
-        address beneficiary =
-            address(0xBEEF5678);
+        address beneficiary = address(0xBEEF5678);
 
-
+        // Make sure the fixture address is not already an approved benefactor.
         (
             bool active,
             ,
             ,
             ,
-            
-        ) =
-            psm.getBenefactorConfig(
-                benefactor
-            );
-
+        ) = psm.getBenefactorConfig(benefactor);
 
         require(
             !active,
-            "U03 fixture collision"
+            "U03: fixture benefactor already active"
         );
 
-
+        // Snapshot global/cross-contract state.
         uint256 supplyBefore =
             IERC20U03(USDTB).totalSupply();
 
@@ -130,30 +109,28 @@ contract U03CrossContractInvariantProbe is Test {
         uint256 psmUsdcBefore =
             IERC20U03(USDC).balanceOf(PSM);
 
-
+        // Construct an intentionally unauthorized order.
         IPSMU03.Order memory order =
-            IPSMU03.Order(
-                true,
-                uint120(
-                    block.timestamp + 1 days
-                ),
-                777,
-                block.chainid,
-                benefactor,
-                beneficiary,
-                USDC,
-                1,
-                1
-            );
+            IPSMU03.Order({
+                isSwapForAsset: true,
+                expiry: uint120(block.timestamp + 1 hours),
+                nonce: uint128(1),
+                chainId: block.chainid,
+                benefactor: benefactor,
+                beneficiary: beneficiary,
+                collateral: USDC,
+                amountIn: uint128(1e6),
+                minAmountOut: uint128(1)
+            });
 
-
+        // Execute only as an unprivileged attacker.
         vm.prank(attacker);
 
         vm.expectRevert();
 
         psm.swap(order);
 
-
+        // Read state after the rejected call.
         uint256 supplyAfter =
             IERC20U03(USDTB).totalSupply();
 
@@ -163,40 +140,56 @@ contract U03CrossContractInvariantProbe is Test {
         uint256 psmUsdcAfter =
             IERC20U03(USDC).balanceOf(PSM);
 
+        // The failed unauthorized operation must not mutate
+        // cross-contract accounting state.
 
         require(
             supplyAfter == supplyBefore,
-            "U03 ALERT: unauthorized path changed USDtb supply"
+            "U03 ALERT: USDtb supply changed"
         );
 
         require(
             psmUsdtbAfter == psmUsdtbBefore,
-            "U03 ALERT: unauthorized path changed PSM USDtb balance"
+            "U03 ALERT: PSM USDtb balance changed"
         );
 
         require(
             psmUsdcAfter == psmUsdcBefore,
-            "U03 ALERT: unauthorized path changed PSM collateral balance"
+            "U03 ALERT: PSM USDC balance changed"
         );
 
-
-        emit log(
-            "U03 STATUS: UNAUTHORIZED CROSS-CONTRACT STATE TRANSITION BLOCKED"
-        );
-
-        emit log_named_uint(
-            "U03 USDtb supply delta",
-            supplyAfter - supplyBefore
+        emit log_string(
+            "U03 STATUS: UNAUTHORIZED PSM SWAP REVERTED; CROSS-CONTRACT STATE UNCHANGED"
         );
 
         emit log_named_uint(
-            "U03 PSM USDtb balance delta",
-            psmUsdtbAfter - psmUsdtbBefore
+            "USDtb supply before",
+            supplyBefore
         );
 
         emit log_named_uint(
-            "U03 PSM USDC balance delta",
-            psmUsdcAfter - psmUsdcBefore
+            "USDtb supply after",
+            supplyAfter
+        );
+
+        emit log_named_uint(
+            "PSM USDtb before",
+            psmUsdtbBefore
+        );
+
+        emit log_named_uint(
+            "PSM USDtb after",
+            psmUsdtbAfter
+        );
+
+        emit log_named_uint(
+            "PSM USDC before",
+            psmUsdcBefore
+        );
+
+        emit log_named_uint(
+            "PSM USDC after",
+            psmUsdcAfter
         );
     }
 }
