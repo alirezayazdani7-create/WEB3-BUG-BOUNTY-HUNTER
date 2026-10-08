@@ -1,0 +1,145 @@
+name: Ethena Minting V2 P27 Delegated Re-Add Resurrection
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  p27-delegated-readd:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      EXECUTION_MODE: LOCAL_FORK_ONLY
+      MAINNET_TRANSACTIONS: "NONE"
+      LIVE_EXECUTION: PROHIBITED
+      SUBMISSION: NOT_PERFORMED
+      MAINNET_RPC_URL: "https://ethereum-rpc.publicnode.com"
+      MINTING: "0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3"
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Verify safety configuration
+        run: |
+          set -euo pipefail
+
+          test "${EXECUTION_MODE}" = "LOCAL_FORK_ONLY"
+          test "${MAINNET_TRANSACTIONS}" = "NONE"
+          test "${LIVE_EXECUTION}" = "PROHIBITED"
+          test "${SUBMISSION}" = "NOT_PERFORMED"
+
+          echo "SAFETY_CONFIGURATION=PASS"
+
+      - name: Check upstream Ethereum RPC
+        run: |
+          set -euo pipefail
+
+          RPC_RESULT="$(cast chain-id --rpc-url "${MAINNET_RPC_URL}")"
+
+          test "${RPC_RESULT}" = "1"
+
+          echo "UPSTREAM_CHAIN_ID=${RPC_RESULT}"
+
+      - name: Start isolated Anvil Mainnet fork
+        run: |
+          set -euo pipefail
+
+          rm -f /tmp/anvil.log /tmp/anvil.pid
+
+          anvil \
+            --fork-url "${MAINNET_RPC_URL}" \
+            --chain-id 31337 \
+            --host 127.0.0.1 \
+            --port 8545 \
+            --auto-impersonate \
+            > /tmp/anvil.log 2>&1 &
+
+          ANVIL_PID=$!
+
+          echo "${ANVIL_PID}" > /tmp/anvil.pid
+
+          READY=0
+
+          for i in $(seq 1 60); do
+
+            if ! kill -0 "${ANVIL_PID}" 2>/dev/null; then
+              cat /tmp/anvil.log || true
+              exit 1
+            fi
+
+            if cast chain-id \
+              --rpc-url http://127.0.0.1:8545 \
+              >/dev/null 2>&1; then
+
+              READY=1
+              break
+
+            fi
+
+            sleep 1
+
+          done
+
+          test "${READY}" = "1"
+
+          CHAIN_ID="$(cast chain-id \
+            --rpc-url http://127.0.0.1:8545)"
+
+          test "${CHAIN_ID}" = "31337"
+
+          echo "ANVIL_CHAIN_ID=${CHAIN_ID}"
+
+      - name: Verify target contract
+        run: |
+          set -euo pipefail
+
+          CODE="$(cast code \
+            "${MINTING}" \
+            --rpc-url http://127.0.0.1:8545)"
+
+          test "${CODE}" != "0x"
+
+          echo "TARGET_CONTRACT_CODE=FOUND"
+
+      - name: Run P27 stale delegation resurrection tests
+        run: |
+          set -euo pipefail
+
+          forge test \
+            --via-ir \
+            --optimize \
+            --fork-url http://127.0.0.1:8545 \
+            --match-path test/MintingV2P27DelegatedReaddResurrection.t.sol \
+            -vvvv
+
+      - name: Verify no live execution occurred
+        run: |
+          set -euo pipefail
+
+          test "${EXECUTION_MODE}" = "LOCAL_FORK_ONLY"
+          test "${MAINNET_TRANSACTIONS}" = "NONE"
+          test "${LIVE_EXECUTION}" = "PROHIBITED"
+          test "${SUBMISSION}" = "NOT_PERFORMED"
+
+          echo "SAFETY_STATUS=PASS"
+
+      - name: Stop isolated Anvil
+        if: always()
+        run: |
+          if [ -f /tmp/anvil.pid ]; then
+            kill "$(cat /tmp/anvil.pid)" 2>/dev/null || true
+          fi
+
+      - name: Dump Anvil log on failure
+        if: failure()
+        run: |
+          echo "===== ANVIL LOG ====="
+          cat /tmp/anvil.log || true
