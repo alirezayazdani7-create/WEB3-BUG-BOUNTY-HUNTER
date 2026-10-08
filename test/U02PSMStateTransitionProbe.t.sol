@@ -4,6 +4,7 @@ pragma solidity ^0.8.26;
 import "forge-std/Test.sol";
 
 interface IPSMU02 {
+
     struct Order {
         bool isSwapForAsset;
         uint120 expiry;
@@ -28,7 +29,16 @@ interface IPSMU02 {
             uint128,
             uint128
         );
+
+    function addBenefactor(address benefactor) external;
+
+    function enableBenefactor(address benefactor) external;
+
+    function disableBenefactor(address benefactor) external;
+
+    function removeBenefactor(address benefactor) external;
 }
+
 
 contract U02PSMStateTransitionProbe is Test {
 
@@ -46,7 +56,8 @@ contract U02PSMStateTransitionProbe is Test {
             )
         );
 
-    function test_U02_UnapprovedBenefactorMustRevert() external {
+
+    function _fork() internal {
 
         uint256 forkId =
             vm.createFork(
@@ -55,17 +66,30 @@ contract U02PSMStateTransitionProbe is Test {
 
         vm.selectFork(forkId);
 
-        IPSMU02 t = IPSMU02(PSM);
-
         require(
-            address(t).code.length > 0,
+            address(PSM).code.length > 0,
             "U02: no PSM bytecode"
         );
 
         require(
-            USDC.code.length > 0,
+            address(USDC).code.length > 0,
             "U02: no USDC bytecode"
         );
+    }
+
+
+    // ------------------------------------------------------------
+    // TEST 1
+    // Unapproved benefactor cannot perform a swap
+    // ------------------------------------------------------------
+
+    function test_U02_UnapprovedBenefactorMustRevert()
+        external
+    {
+        _fork();
+
+        IPSMU02 t =
+            IPSMU02(PSM);
 
         address attacker =
             address(0xCAFE1234);
@@ -73,25 +97,31 @@ contract U02PSMStateTransitionProbe is Test {
         address benefactor =
             address(0xABCD1234);
 
+
         (
             bool active,
             ,
             ,
             ,
             
-        ) = t.getBenefactorConfig(
-            benefactor
-        );
+        ) =
+            t.getBenefactorConfig(
+                benefactor
+            );
+
 
         require(
             !active,
             "U02 fixture collision"
         );
 
+
         IPSMU02.Order memory order =
             IPSMU02.Order(
                 true,
-                uint120(block.timestamp + 1 days),
+                uint120(
+                    block.timestamp + 1 days
+                ),
                 1,
                 block.chainid,
                 benefactor,
@@ -101,14 +131,112 @@ contract U02PSMStateTransitionProbe is Test {
                 1
             );
 
+
         vm.prank(attacker);
 
         vm.expectRevert();
 
         t.swap(order);
 
+
         emit log(
             "U02 STATUS: UNAPPROVED BENEFACTOR SWAP REVERTED; PSM AUTHORIZATION BOUNDARY HOLDS"
+        );
+    }
+
+
+    // ------------------------------------------------------------
+    // TEST 2
+    // Unprivileged account cannot mutate benefactor state
+    // ------------------------------------------------------------
+
+    function test_U02_UnprivilegedCannotMutateBenefactorState()
+        external
+    {
+        _fork();
+
+        IPSMU02 t =
+            IPSMU02(PSM);
+
+        address attacker =
+            address(0xCAFE1234);
+
+        address target =
+            address(0xBEEF5678);
+
+
+        (
+            bool active,
+            ,
+            ,
+            ,
+            
+        ) =
+            t.getBenefactorConfig(
+                target
+            );
+
+
+        require(
+            !active,
+            "U02 fixture collision"
+        );
+
+
+        vm.startPrank(attacker);
+
+
+        vm.expectRevert();
+
+        t.addBenefactor(
+            target
+        );
+
+
+        vm.expectRevert();
+
+        t.enableBenefactor(
+            target
+        );
+
+
+        vm.expectRevert();
+
+        t.disableBenefactor(
+            target
+        );
+
+
+        vm.expectRevert();
+
+        t.removeBenefactor(
+            target
+        );
+
+
+        vm.stopPrank();
+
+
+        (
+            bool activeAfter,
+            ,
+            ,
+            ,
+            
+        ) =
+            t.getBenefactorConfig(
+                target
+            );
+
+
+        require(
+            !activeAfter,
+            "U02: unauthorized state mutation"
+        );
+
+
+        emit log(
+            "U02 STATUS: ALL FOUR BENEFACTOR STATE MUTATIONS BLOCKED FOR UNPRIVILEGED CALLER"
         );
     }
 }
