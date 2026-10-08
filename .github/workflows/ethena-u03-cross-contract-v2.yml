@@ -1,0 +1,53 @@
+name: Ethena U03 Cross-Contract V2
+
+on:
+  workflow_dispatch:
+
+jobs:
+  u03-cross-contract-v2:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Create isolated Foundry project
+        run: |
+          rm -rf /tmp/u03-v2
+          mkdir -p /tmp/u03-v2
+          cd /tmp/u03-v2
+
+          forge init --force .
+
+          rm -rf test
+          mkdir -p test
+
+          cp "$GITHUB_WORKSPACE/test/U03CrossContractV2Probe.t.sol" \
+             test/U03CrossContractV2Probe.t.sol
+
+          forge install foundry-rs/forge-std --no-commit
+
+      - name: Verify test file
+        working-directory: /tmp/u03-v2
+        run: |
+          test -f test/U03CrossContractV2Probe.t.sol
+          echo "U03 V2 test file found"
+
+      - name: Run U03 V2
+        working-directory: /tmp/u03-v2
+        env:
+          ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
+        run: |
+          forge test \
+            --match-contract U03CrossContractV2Probe \
+            -vvv
+
+      - name: Print completion status
+        if: success()
+        run: |
+          echo "U03 V2 STATUS: ALL TESTS PASSED"
+          echo "No vulnerability is claimed by a green test."
+          echo "Any finding requires a reproducible permissionless exploit."
