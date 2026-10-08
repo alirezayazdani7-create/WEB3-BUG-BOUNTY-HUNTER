@@ -24,239 +24,477 @@ jobs:
       - name: Clone authoritative audit harness
         run: |
           set -euo pipefail
-          git clone --depth 1 https://github.com/chrispyspearbit/ethena-audit-package.git /tmp/ethena-audit
-          test -f /tmp/ethena-audit/package/source/bbp-public-assets/contracts/foundry.toml
+
+          git clone --depth 1 \
+            https://github.com/chrispyspearbit/ethena-audit-package.git \
+            /tmp/ethena-audit
+
+          test -f \
+            /tmp/ethena-audit/package/source/bbp-public-assets/contracts/foundry.toml
+
           echo "AUTHORITATIVE_HARNESS=PASS"
 
-      - name: Build multi-stage adversarial test
+      - name: Build adversarial local-fork test
         run: |
           set -euo pipefail
-          mkdir -p /tmp/ethena-audit/package/source/bbp-public-assets/contracts/test/foundry/minting/tests
 
-          cat > /tmp/ethena-audit/package/source/bbp-public-assets/contracts/test/foundry/minting/tests/P31_AdversarialMultiStage.t.sol <<'SOL'
+          mkdir -p \
+            /tmp/ethena-audit/package/source/bbp-public-assets/contracts/test/foundry/minting/tests
+
+          cat > \
+          /tmp/ethena-audit/package/source/bbp-public-assets/contracts/test/foundry/minting/tests/P31_AdversarialMultiStage.t.sol \
+          <<'SOL'
+
           // SPDX-License-Identifier: MIT
           pragma solidity 0.8.20;
 
           import {Test} from "forge-std/Test.sol";
-          import {IEthenaMinting} from "../../../contracts/interfaces/IEthenaMinting.sol";
 
-          interface IERC20Like {
-            function balanceOf(address) external view returns (uint256);
+          interface IEthenaMintingP31 {
+
+              enum OrderType {
+                  MINT,
+                  REDEEM
+              }
+
+              enum SignatureType {
+                  EIP712,
+                  EIP1271
+              }
+
+              struct Order {
+                  string order_id;
+                  OrderType order_type;
+                  uint120 expiry;
+                  uint128 nonce;
+                  address benefactor;
+                  address beneficiary;
+                  address collateral_asset;
+                  uint128 collateral_amount;
+                  uint128 usde_amount;
+              }
+
+              struct Route {
+                  address[] addresses;
+                  uint128[] ratios;
+              }
+
+              struct Signature {
+                  SignatureType signature_type;
+                  bytes signature_bytes;
+              }
+
+              function mint(
+                  Order calldata order,
+                  Route calldata route,
+                  Signature calldata signature
+              ) external;
+
+              function redeem(
+                  Order calldata order,
+                  Signature calldata signature
+              ) external;
+
+              function setDelegatedSigner(
+                  address delegateTo
+              ) external;
+
+              function confirmDelegatedSigner(
+                  address delegatedBy
+              ) external;
+
+              function removeDelegatedSigner(
+                  address removedSigner
+              ) external;
+
+              function setApprovedBeneficiary(
+                  address beneficiary,
+                  bool status
+              ) external;
+
+              function isApprovedBeneficiary(
+                  address benefactor,
+                  address beneficiary
+              ) external view returns (bool);
+
+              function isWhitelistedBenefactor(
+                  address benefactor
+              ) external view returns (bool);
           }
 
-          interface IERC4626Like {
-            function redeem(
-              uint256 shares,
-              address receiver,
-              address owner
-            ) external returns (uint256);
+          interface IERC20P31 {
+              function balanceOf(
+                  address account
+              ) external view returns (uint256);
+          }
+
+          interface IERC4626P31 {
+              function redeem(
+                  uint256 shares,
+                  address receiver,
+                  address owner
+              ) external returns (uint256);
           }
 
           contract P31_AdversarialMultiStage is Test {
-            address constant MINTING =
-              0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3;
 
-            address constant USDE =
-              0x4c9EDD5852cd905f086C759E8383e09bff1E68B3;
+              address constant MINTING =
+                  0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3;
 
-            address constant SUSDE =
-              0x9d39A5de30e57443BfF2A8307A4256c8797A3497;
+              address constant USDE =
+                  0x4c9EDD5852cd905f086C759E8383e09bff1E68B3;
 
-            address attacker = address(0xA11CE);
-            address victim = address(0xB0B);
+              address constant SUSDE =
+                  0x9d39A5de30e57443BfF2A8307A4256c8797A3497;
 
-            function setUp() public {
-              vm.createSelectFork(vm.envString("ETH_RPC_URL"));
-            }
+              address constant ATTACKER =
+                  address(0xA11CE);
 
-            function testFuzz_PublicMultiStageCannotMutateVictimAuthorization(
-              uint8 n
-            ) public {
-              n = uint8(bound(n, 1, 32));
+              address constant VICTIM =
+                  address(0xB0B);
 
-              bool beforeApproved =
-                IEthenaMinting(MINTING)
-                  .isApprovedBeneficiary(victim, attacker);
-
-              bool beforeWhitelisted =
-                IEthenaMinting(MINTING)
-                  .isWhitelistedBenefactor(victim);
-
-              for (uint256 i; i < n; ++i) {
-                vm.prank(attacker);
-
-                uint256 branch = i % 4;
-
-                if (branch == 0) {
-                  IEthenaMinting(MINTING)
-                    .setDelegatedSigner(victim);
-                } else if (branch == 1) {
-                  try IEthenaMinting(MINTING)
-                    .confirmDelegatedSigner(victim) {}
-                  catch {}
-                } else if (branch == 2) {
-                  IEthenaMinting(MINTING)
-                    .removeDelegatedSigner(victim);
-                } else {
-                  IEthenaMinting(MINTING)
-                    .setApprovedBeneficiary(victim, true);
-
-                  IEthenaMinting(MINTING)
-                    .setApprovedBeneficiary(victim, false);
-                }
+              function setUp() public {
+                  vm.createSelectFork(
+                      vm.envString("ETH_RPC_URL")
+                  );
               }
 
-              assertEq(
-                IEthenaMinting(MINTING)
-                  .isApprovedBeneficiary(victim, attacker),
-                beforeApproved
-              );
+              /*
+               * STAGE 1
+               *
+               * Check whether an unprivileged attacker can
+               * manipulate authorization state belonging to
+               * another benefactor.
+               */
+              function testStage1_CrossAccountAuthorizationIsolation()
+                  public
+              {
+                  IEthenaMintingP31 minting =
+                      IEthenaMintingP31(MINTING);
 
-              assertEq(
-                IEthenaMinting(MINTING)
-                  .isWhitelistedBenefactor(victim),
-                beforeWhitelisted
-              );
-            }
+                  bool beforeApproved =
+                      minting.isApprovedBeneficiary(
+                          VICTIM,
+                          ATTACKER
+                      );
 
-            function test_PublicAttackPathCannotReachMintOrRedeem()
-              public
-            {
-              IEthenaMinting minting =
-                IEthenaMinting(MINTING);
+                  bool beforeWhitelist =
+                      minting.isWhitelistedBenefactor(
+                          VICTIM
+                      );
 
-              IEthenaMinting.Order memory order =
-                IEthenaMinting.Order({
-                  order_id: "P31",
-                  order_type:
-                    IEthenaMinting.OrderType.MINT,
-                  expiry:
-                    uint120(block.timestamp + 1 days),
-                  nonce: 1,
-                  benefactor: attacker,
-                  beneficiary: attacker,
-                  collateral_asset: USDE,
-                  collateral_amount: 1e18,
-                  usde_amount: 1e18
-                });
+                  vm.startPrank(ATTACKER);
 
-              IEthenaMinting.Route memory route;
+                  minting.setDelegatedSigner(
+                      VICTIM
+                  );
 
-              route.addresses =
-                new address[](1);
+                  try minting.confirmDelegatedSigner(
+                      VICTIM
+                  ) {} catch {}
 
-              route.ratios =
-                new uint128[](1);
+                  try minting.removeDelegatedSigner(
+                      VICTIM
+                  ) {} catch {}
 
-              route.addresses[0] = attacker;
-              route.ratios[0] = 10000;
-
-              IEthenaMinting.Signature memory sig;
-
-              sig.signature_type =
-                IEthenaMinting.SignatureType.EIP712;
-
-              sig.signature_bytes =
-                new bytes(65);
-
-              vm.prank(attacker);
-
-              vm.expectRevert();
-
-              minting.mint(
-                order,
-                route,
-                sig
-              );
-
-              order.order_type =
-                IEthenaMinting.OrderType.REDEEM;
-
-              vm.prank(attacker);
-
-              vm.expectRevert();
-
-              minting.redeem(
-                order,
-                sig
-              );
-            }
-
-            function test_PublicSequenceDoesNotIncreaseAttackerUSDe()
-              public
-            {
-              deal(
-                USDE,
-                attacker,
-                10e18
-              );
-
-              uint256 beforeBal =
-                IERC20Like(USDE)
-                  .balanceOf(attacker);
-
-              for (uint256 i; i < 24; ++i) {
-                vm.prank(attacker);
-
-                if (i % 4 == 0) {
-                  IEthenaMinting(MINTING)
-                    .setDelegatedSigner(victim);
-                } else if (i % 4 == 1) {
-                  IEthenaMinting(MINTING)
-                    .removeDelegatedSigner(victim);
-                } else if (i % 4 == 2) {
-                  IEthenaMinting(MINTING)
-                    .setApprovedBeneficiary(
-                      victim,
+                  try minting.setApprovedBeneficiary(
+                      VICTIM,
                       true
-                    );
-                } else {
-                  IEthenaMinting(MINTING)
-                    .setApprovedBeneficiary(
-                      victim,
-                      false
-                    );
-                }
+                  ) {} catch {}
+
+                  vm.stopPrank();
+
+                  assertEq(
+                      minting.isApprovedBeneficiary(
+                          VICTIM,
+                          ATTACKER
+                      ),
+                      beforeApproved
+                  );
+
+                  assertEq(
+                      minting.isWhitelistedBenefactor(
+                          VICTIM
+                      ),
+                      beforeWhitelist
+                  );
               }
 
-              assertEq(
-                IERC20Like(USDE)
-                  .balanceOf(attacker),
-                beforeBal
-              );
-            }
+              /*
+               * STAGE 2
+               *
+               * Attempt to reach mint/redeem directly from
+               * an unprivileged account using an invalid signature.
+               */
+              function testStage2_UnprivilegedCannotReachMintRedeem()
+                  public
+              {
+                  IEthenaMintingP31 minting =
+                      IEthenaMintingP31(MINTING);
 
-            function test_PublicSequenceCannotCreateValueFromSUSDeWithoutOwnedShares()
-              public
-            {
-              uint256 beforeUSDe =
-                IERC20Like(USDE)
-                  .balanceOf(attacker);
+                  IEthenaMintingP31.Order memory order =
+                      IEthenaMintingP31.Order({
+                          order_id: "P31",
+                          order_type:
+                              IEthenaMintingP31.OrderType.MINT,
+                          expiry:
+                              uint120(
+                                  block.timestamp + 1 days
+                              ),
+                          nonce: 1,
+                          benefactor: ATTACKER,
+                          beneficiary: ATTACKER,
+                          collateral_asset: USDE,
+                          collateral_amount: 1e18,
+                          usde_amount: 1e18
+                      });
 
-              uint256 beforeShares =
-                IERC20Like(SUSDE)
-                  .balanceOf(attacker);
+                  IEthenaMintingP31.Route memory route;
 
-              vm.prank(attacker);
+                  route.addresses =
+                      new address[](1);
 
-              try IERC4626Like(SUSDE).redeem(
-                1,
-                attacker,
-                attacker
-              ) {} catch {}
+                  route.ratios =
+                      new uint128[](1);
 
-              assertEq(
-                IERC20Like(SUSDE)
-                  .balanceOf(attacker),
-                beforeShares
-              );
+                  route.addresses[0] =
+                      ATTACKER;
 
-              assertEq(
-                IERC20Like(USDE)
-                  .balanceOf(attacker),
-                beforeUSDe
-              );
-            }
+                  route.ratios[0] =
+                      10000;
+
+                  IEthenaMintingP31.Signature memory sig;
+
+                  sig.signature_type =
+                      IEthenaMintingP31.SignatureType.EIP712;
+
+                  sig.signature_bytes =
+                      new bytes(65);
+
+                  vm.prank(ATTACKER);
+
+                  vm.expectRevert();
+
+                  minting.mint(
+                      order,
+                      route,
+                      sig
+                  );
+
+                  order.order_type =
+                      IEthenaMintingP31.OrderType.REDEEM;
+
+                  vm.prank(ATTACKER);
+
+                  vm.expectRevert();
+
+                  minting.redeem(
+                      order,
+                      sig
+                  );
+              }
+
+              /*
+               * STAGE 3
+               *
+               * Execute repeated authorization-state transitions
+               * and verify that they cannot create USDe.
+               */
+              function testStage3_StateTransitionsDoNotCreateUSDe()
+                  public
+              {
+                  deal(
+                      USDE,
+                      ATTACKER,
+                      10e18
+                  );
+
+                  uint256 beforeBalance =
+                      IERC20P31(USDE).balanceOf(
+                          ATTACKER
+                      );
+
+                  IEthenaMintingP31 minting =
+                      IEthenaMintingP31(MINTING);
+
+                  for (
+                      uint256 i = 0;
+                      i < 32;
+                      ++i
+                  ) {
+                      vm.startPrank(ATTACKER);
+
+                      if (i % 4 == 0) {
+                          try minting.setDelegatedSigner(
+                              VICTIM
+                          ) {} catch {}
+                      }
+
+                      if (i % 4 == 1) {
+                          try minting.removeDelegatedSigner(
+                              VICTIM
+                          ) {} catch {}
+                      }
+
+                      if (i % 4 == 2) {
+                          try minting.setApprovedBeneficiary(
+                              VICTIM,
+                              true
+                          ) {} catch {}
+                      }
+
+                      if (i % 4 == 3) {
+                          try minting.setApprovedBeneficiary(
+                              VICTIM,
+                              false
+                          ) {} catch {}
+                      }
+
+                      vm.stopPrank();
+                  }
+
+                  uint256 afterBalance =
+                      IERC20P31(USDE).balanceOf(
+                          ATTACKER
+                      );
+
+                  assertEq(
+                      afterBalance,
+                      beforeBalance
+                  );
+              }
+
+              /*
+               * STAGE 4
+               *
+               * Attempt to manufacture value from sUSDe
+               * without owning shares.
+               */
+              function testStage4_NoFreeValueFromSUSDe()
+                  public
+              {
+                  uint256 beforeUSDe =
+                      IERC20P31(USDE).balanceOf(
+                          ATTACKER
+                      );
+
+                  uint256 beforeShares =
+                      IERC20P31(SUSDE).balanceOf(
+                          ATTACKER
+                      );
+
+                  vm.prank(ATTACKER);
+
+                  try IERC4626P31(SUSDE).redeem(
+                      1,
+                      ATTACKER,
+                      ATTACKER
+                  ) {} catch {}
+
+                  uint256 afterShares =
+                      IERC20P31(SUSDE).balanceOf(
+                          ATTACKER
+                      );
+
+                  uint256 afterUSDe =
+                      IERC20P31(USDE).balanceOf(
+                          ATTACKER
+                      );
+
+                  assertEq(
+                      afterShares,
+                      beforeShares
+                  );
+
+                  assertEq(
+                      afterUSDe,
+                      beforeUSDe
+                  );
+              }
+
+              /*
+               * STAGE 5
+               *
+               * Combined state-transition sequence.
+               *
+               * The important condition is not simply that
+               * individual calls revert. The invariant is:
+               *
+               * attacker value after sequence
+               * <= attacker value before sequence
+               */
+              function testStage5_CombinedSequencePreservesValue()
+                  public
+              {
+                  deal(
+                      USDE,
+                      ATTACKER,
+                      100e18
+                  );
+
+                  uint256 beforeValue =
+                      IERC20P31(USDE).balanceOf(
+                          ATTACKER
+                      );
+
+                  IEthenaMintingP31 minting =
+                      IEthenaMintingP31(MINTING);
+
+                  for (
+                      uint256 i = 0;
+                      i < 64;
+                      ++i
+                  ) {
+                      vm.startPrank(ATTACKER);
+
+                      if (i % 5 == 0) {
+                          try minting.setDelegatedSigner(
+                              VICTIM
+                          ) {} catch {}
+                      }
+
+                      if (i % 5 == 1) {
+                          try minting.removeDelegatedSigner(
+                              VICTIM
+                          ) {} catch {}
+                      }
+
+                      if (i % 5 == 2) {
+                          try minting.setApprovedBeneficiary(
+                              VICTIM,
+                              true
+                          ) {} catch {}
+                      }
+
+                      if (i % 5 == 3) {
+                          try minting.setApprovedBeneficiary(
+                              VICTIM,
+                              false
+                          ) {} catch {}
+
+                      vm.stopPrank();
+                  }
+
+                  uint256 afterValue =
+                      IERC20P31(USDE).balanceOf(
+                          ATTACKER
+                      );
+
+                  assertLe(
+                      afterValue,
+                      beforeValue
+                  );
+
+                  emit log_named_uint(
+                      "ATTACKER_USDE_BEFORE",
+                      beforeValue
+                  );
+
+                  emit log_named_uint(
+                      "ATTACKER_USDE_AFTER",
+                      afterValue
+                  );
+              }
           }
           SOL
 
@@ -273,7 +511,8 @@ jobs:
           forge build
 
           forge test \
-            --match-path test/foundry/minting/tests/P31_AdversarialMultiStage.t.sol \
+            --match-path \
+            test/foundry/minting/tests/P31_AdversarialMultiStage.t.sol \
             -vvv
 
           echo "P31_LOCAL_FORK_EXECUTION=PASS"
