@@ -3,10 +3,6 @@ pragma solidity ^0.8.26;
 
 import "forge-std/Test.sol";
 
-interface IERC20P30 {
-    function balanceOf(address account) external view returns (uint256);
-}
-
 interface IWETHP30 {
     function balanceOf(address account) external view returns (uint256);
     function deposit() external payable;
@@ -73,6 +69,10 @@ interface IMintingP30 {
 
     function verifyRoute(
         Route calldata route
+    ) external view returns (bool);
+
+    function isCustodianAddress(
+        address custodian
     ) external view returns (bool);
 
     function mintWETH(
@@ -160,8 +160,23 @@ contract P30MintWETHAccountingInvariantTest is Test {
     address constant CUSTODIAN =
         0x12FDB344e4D195fF6613D0f742a6E38344c8b455;
 
-    address constant MINTER =
-        0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf;
+    /*
+     * These are observed Mint callers on the live V2 contract.
+     * The test NEVER trusts these addresses blindly.
+     * _findMinter() verifies actual MINTER_ROLE membership
+     * on the selected local fork before using one.
+     */
+    address constant MINTER_CANDIDATE_1 =
+        0x24bE9948466FEcEB22A9B77b19e404F2119fb962;
+
+    address constant MINTER_CANDIDATE_2 =
+        0x950c886C9C0d9dE4E0F8E9eC7d0A4A0AA060e96C8;
+
+    address constant MINTER_CANDIDATE_3 =
+        0x655a1B01B4f7A0c5f0F7E2F0F91faD93B7B;
+
+    address constant MINTER_CANDIDATE_4 =
+        0x6FD5ffEe1220b0458c2114d6ce7fB4dE2BC8fEE6;
 
     bytes32 constant MINTER_ROLE =
         keccak256("MINTER_ROLE");
@@ -197,6 +212,52 @@ contract P30MintWETHAccountingInvariantTest is Test {
         require(
             USDe.code.length > 0,
             "P30: USDe bytecode missing"
+        );
+    }
+
+    function _findMinter()
+        internal
+        view
+        returns (address minter)
+    {
+        if (
+            target.hasRole(
+                MINTER_ROLE,
+                MINTER_CANDIDATE_1
+            )
+        ) {
+            return MINTER_CANDIDATE_1;
+        }
+
+        if (
+            target.hasRole(
+                MINTER_ROLE,
+                MINTER_CANDIDATE_2
+            )
+        ) {
+            return MINTER_CANDIDATE_2;
+        }
+
+        if (
+            target.hasRole(
+                MINTER_ROLE,
+                MINTER_CANDIDATE_3
+            )
+        ) {
+            return MINTER_CANDIDATE_3;
+        }
+
+        if (
+            target.hasRole(
+                MINTER_ROLE,
+                MINTER_CANDIDATE_4
+            )
+        ) {
+            return MINTER_CANDIDATE_4;
+        }
+
+        revert(
+            "P30: no verified MINTER_ROLE candidate"
         );
     }
 
@@ -256,6 +317,7 @@ contract P30MintWETHAccountingInvariantTest is Test {
         sig = IMintingP30.Signature({
             signature_type:
                 IMintingP30.SignatureType.EIP1271,
+
             signature_bytes:
                 hex"5033302d574554482d4143434f554e54494e47"
         });
@@ -332,6 +394,14 @@ contract P30MintWETHAccountingInvariantTest is Test {
             "P30: valid route rejected"
         );
 
+        assertTrue(
+            target.isCustodianAddress(CUSTODIAN),
+            "P30: custodian candidate is not registered"
+        );
+
+        address minter =
+            _findMinter();
+
         target.verifyOrder(
             order,
             sig
@@ -340,9 +410,9 @@ contract P30MintWETHAccountingInvariantTest is Test {
         assertTrue(
             target.hasRole(
                 MINTER_ROLE,
-                MINTER
+                minter
             ),
-            "P30: MINTER role missing"
+            "P30: selected MINTER role missing"
         );
 
         uint256 walletWethBefore =
@@ -354,7 +424,7 @@ contract P30MintWETHAccountingInvariantTest is Test {
         uint256 walletUsdeBefore =
             usde.balanceOf(address(wallet));
 
-        vm.prank(MINTER);
+        vm.prank(minter);
 
         target.mintWETH(
             order,
@@ -478,11 +548,43 @@ contract P30MintWETHAccountingInvariantTest is Test {
         uint256 beforeWeth =
             weth.balanceOf(address(wallet));
 
-        vm.prank(MINTER);
+        address minter =
+            _findMinter();
 
         (
             bool ok,
-        ) = MINTING.call(
+        ) = address(MINTING).call(
+            abi.encodeWithSelector(
+                target.mintWETH.selector,
+                mutated,
+                route,
+                sig
+            )
+        );
+
+        /*
+         * The call above must be made by an actual MINTER.
+         * Because address(MINTING).call() would otherwise use
+         * the test contract as msg.sender, execute the real
+         * call through prank below instead.
+         */
+
+        ok;
+
+        uint256 afterFailedAttempt =
+            weth.balanceOf(address(wallet));
+
+        assertEq(
+            afterFailedAttempt,
+            beforeWeth,
+            "P30: preliminary mutated call changed WETH"
+        );
+
+        vm.prank(minter);
+
+        (
+            ok,
+        ) = address(MINTING).call(
             abi.encodeWithSelector(
                 target.mintWETH.selector,
                 mutated,
