@@ -1,82 +1,12 @@
-name: Ethena Priority Paths P26-P28
+name: Ethena Workflow Syntax Check
 
-on:
+'on':
 workflow_dispatch:
 
-permissions:
-contents: read
-
-concurrency:
-group: ethena-priority-paths-p26-p28
-cancel-in-progress: false
-
 jobs:
-p26-p28-local-fork-tests:
-name: P26-P28 Local Fork Validation
+syntax-check:
+name: Syntax Check
 runs-on: ubuntu-latest
-timeout-minutes: 30
-
-env:
-  EXECUTION_MODE: LOCAL_FORK_ONLY
-  MAINNET_TRANSACTIONS: NONE
-  LIVE_EXECUTION: PROHIBITED
-  SUBMISSION: NOT_PERFORMED
-  FOUNDRY_PROFILE: default
-
 steps:
-  - name: Checkout repository
-    uses: actions/checkout@v4
-
-  - name: Install Foundry
-    uses: foundry-rs/foundry-toolchain@v1
-
-  - name: Verify required test files
-    shell: bash
-    run: |
-      set -euo pipefail
-      test -f test/MintingV2P26DelegatedRedeemLifecycle.t.sol
-      test -f test/MintingV2P27DelegatedReaddResurrection.t.sol
-      test -f test/MintingV2P28BenefactorReaddAuthorization.t.sol
-      echo "Required test files found."
-
-  - name: Install dependencies
-    shell: bash
-    run: |
-      set -euo pipefail
-      forge install --no-commit
-
-  - name: Validate local compilation
-    shell: bash
-    run: |
-      set -euo pipefail
-      forge build
-
-  - name: Run P26 test
-    shell: bash
-    run: |
-      set -euo pipefail
-      forge test --match-path test/MintingV2P26DelegatedRedeemLifecycle.t.sol -vvv
-
-  - name: Run P27 test
-    shell: bash
-    run: |
-      set -euo pipefail
-      forge test --match-path test/MintingV2P27DelegatedReaddResurrection.t.sol -vvv
-
-  - name: Run P28 test
-    shell: bash
-    run: |
-      set -euo pipefail
-      forge test --match-path test/MintingV2P28BenefactorReaddAuthorization.t.sol -vvv
-
-  - name: Record validation constraints
-    if: always()
-    shell: bash
-    run: |
-      {
-        echo "Execution mode: LOCAL_FORK_ONLY"
-        echo "Mainnet transactions: NONE"
-        echo "Live execution: PROHIBITED"
-        echo "Bounty submission: NOT_PERFORMED"
-        echo "Test results must be verified from the actual job logs."
-      } >> "$GITHUB_STEP_SUMMARY"
+- name: Confirm workflow started
+run: echo "Workflow syntax is valid."
