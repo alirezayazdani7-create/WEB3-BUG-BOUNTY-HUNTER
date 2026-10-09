@@ -1,4 +1,3 @@
-
 name: Fork Validation Lab
 
 on:
@@ -33,7 +32,6 @@ jobs:
           set -euo pipefail
           if [ -z "${ETH_RPC_URL:-}" ]; then
             echo "::error::ETH_RPC_URL secret is missing."
-            echo "Add it in Settings > Secrets and variables > Actions."
             exit 1
           fi
           echo "RPC secret is configured."
@@ -43,8 +41,7 @@ jobs:
 
       - name: Prepare Foundry project
         shell: bash
-        run: |
-          set -euo pipefail
+  
 
           if [ ! -f foundry.toml ]; then
             cat > foundry.toml <<'EOF'
@@ -54,7 +51,7 @@ jobs:
           script = "script"
           out = "out"
           libs = ["lib"]
-          solc_version = "0.8.19"
+          solc_version = "0.8.20"
           EOF
           fi
 
@@ -66,28 +63,27 @@ jobs:
 
           forge --version
 
-      - name: Verify P301 diagnostic test exists
+      - name: Verify diagnostic test exists
         shell: bash
         run: |
           set -euo pipefail
           test -f test/P301_UnauthorizedRemovalProof.t.sol
-          grep -q "test_DiagnoseTargetCalls" \
+          grep -q "function test_DiagnoseTargetReadCalls" \
             test/P301_UnauthorizedRemovalProof.t.sol
-          echo "P301 diagnostic test found."
+          echo "Diagnostic test found."
 
       - name: Run read-only fork diagnostics
         shell: bash
         run: |
           set -euo pipefail
-
           echo "LIVE_TRADING=PROHIBITED"
           echo "MAINNET_TRANSACTIONS=NONE"
           echo "TEST_MODE=READ_ONLY_FORK_DIAGNOSTICS"
 
           forge test \
             --match-path test/P301_UnauthorizedRemovalProof.t.sol \
-            --match-test test_DiagnoseTargetCalls \
-            -vvvv
+            --match-test test_DiagnoseTargetReadCalls \
+            -vvv
 
       - name: Record validation status
         if: always()
