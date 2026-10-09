@@ -1,0 +1,114 @@
+name: Ethena P30.1 WETH Removal Transaction Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit-removal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Inspect removal transaction and surrounding state
+        env:
+          ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
+        run: |
+          set -euo pipefail
+
+          RPC="$ETHENA_FORK_RPC"
+          CONTRACT="0xe3490297a08d6fc8da46edb7b6142e4f461b62d3"
+          WETH="0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+          TX="0x6b7cfa942bd75c909ddfa0fcaa02daabb0387759f89e72e3ad60c0f68f3064aa"
+          BLOCK=20167890
+          BEFORE=$((BLOCK - 1))
+
+          echo "MODE=READ_ONLY"
+          echo "TX=$TX"
+          echo "CONTRACT=$CONTRACT"
+          echo "BLOCK=$BLOCK"
+
+          echo "=== TRANSACTION ==="
+          cast tx "$TX" --rpc-url "$RPC" --json | tee transaction.json
+
+          echo "=== RECEIPT AND LOGS ==="
+          cast receipt "$TX" --rpc-url "$RPC" --json | tee receipt.json
+
+          echo "=== WETH CONFIG BEFORE REMOVAL BLOCK ==="
+          cast call "$CONTRACT" \
+            "tokenConfig(address)(uint8,bool,uint128,uint128)" \
+            "$WETH" \
+            --block "$BEFORE" \
+            --rpc-url "$RPC" | tee config-before.txt
+
+          echo "=== WETH SUPPORT BEFORE REMOVAL BLOCK ==="
+          cast call "$CONTRACT" \
+            "isSupportedAsset(address)(bool)" \
+            "$WETH" \
+            --block "$BEFORE" \
+            --rpc-url "$RPC" | tee support-before.txt
+
+          echo "=== WETH CONFIG AT REMOVAL BLOCK ==="
+          cast call "$CONTRACT" \
+            "tokenConfig(address)(uint8,bool,uint128,uint128)" \
+            "$WETH" \
+            --block "$BLOCK" \
+            --rpc-url "$RPC" | tee config-after.txt
+
+          echo "=== WETH SUPPORT AT REMOVAL BLOCK ==="
+          cast call "$CONTRACT" \
+            "isSupportedAsset(address)(bool)" \
+            "$WETH" \
+            --block "$BLOCK" \
+            --rpc-url "$RPC" | tee support-after.txt
+
+          echo "=== TRACE ATTEMPT ==="
+          if cast run "$TX" --rpc-url "$RPC" 2>&1 | tee trace.txt; then
+            echo "TRACE_STATUS=AVAILABLE"
+          else
+            echo "TRACE_STATUS=UNAVAILABLE_OR_FAILED"
+          fi
+
+          cat > audit-notes.md <<EOF
+          # WETH Removal Transaction Audit
+
+          - Mode: READ_ONLY
+          - Transaction: $TX
+          - Contract: $CONTRACT
+          - Removal event block: $BLOCK
+          - Previous block queried: $BEFORE
+          - No transaction was sent by this workflow.
+          - No contract state was modified by this workflow.
+
+          ## Important limitation
+
+          The before/after calls query end-of-block state. They do not establish
+          the exact state immediately before or after this transaction when
+          other transactions occur in the same block.
+
+          A successful workflow is not proof of a vulnerability. Review the
+          transaction sender, function selector, receipt logs, trace, and
+          resulting state together.
+          EOF
+
+      - name: Upload audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethena-p301-weth-removal-audit
+          path: |
+            transaction.json
+            receipt.json
+            config-before.txt
+            support-before.txt
+            config-after.txt
+            support-after.txt
+            trace.txt
+            audit-notes.md
+          if-no-files-found: warn
+          retention-days: 14
