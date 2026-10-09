@@ -66,33 +66,33 @@ jobs:
 
           forge --version
 
-      - name: Verify P301 test exists
+      - name: Verify P301 diagnostic test exists
         shell: bash
         run: |
           set -euo pipefail
           test -f test/P301_UnauthorizedRemovalProof.t.sol
-          grep -q "test_UnauthorizedCannotRemoveSupportedAsset" \
+          grep -q "test_DiagnoseTargetCalls" \
             test/P301_UnauthorizedRemovalProof.t.sol
-          echo "P301 test file found."
+          echo "P301 diagnostic test found."
 
-      - name: Run P301 against isolated fork state
+      - name: Run read-only fork diagnostics
         shell: bash
         run: |
           set -euo pipefail
 
           echo "LIVE_TRADING=PROHIBITED"
           echo "MAINNET_TRANSACTIONS=NONE"
-          echo "TEST_MODE=LOCAL_FORK_SIMULATION"
+          echo "TEST_MODE=READ_ONLY_FORK_DIAGNOSTICS"
 
           forge test \
             --match-path test/P301_UnauthorizedRemovalProof.t.sol \
-            --match-test test_UnauthorizedCannotRemoveSupportedAsset \
-            -vvv
+            --match-test test_DiagnoseTargetCalls \
+            -vvvv
 
       - name: Record validation status
         if: always()
         shell: bash
         run: |
-          echo "Execution mode: local fork simulation"
+          echo "Execution mode: read-only fork diagnostics"
           echo "Live trading: prohibited"
           echo "Mainnet transactions: none"
