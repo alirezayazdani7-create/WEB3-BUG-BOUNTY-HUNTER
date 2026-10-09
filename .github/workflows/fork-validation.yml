@@ -43,6 +43,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           if [ ! -f foundry.toml ]; then
             cat > foundry.toml <<'EOF'
           [profile.default]
@@ -54,36 +55,41 @@ jobs:
           solc_version = "0.8.20"
           EOF
           fi
+
           mkdir -p lib
+
           if [ ! -f lib/forge-std/src/Test.sol ]; then
             forge install foundry-rs/forge-std --no-commit
           fi
+
           forge --version
 
-      - name: Verify diagnostic test exists
+      - name: Verify P301 test exists
         shell: bash
         run: |
           set -euo pipefail
           test -f test/P301_UnauthorizedRemovalProof.t.sol
-          grep -q "function test_DiagnoseTargetReadCalls" test/P301_UnauthorizedRemovalProof.t.sol
-          echo "Diagnostic test found."
+          grep -q "function test_UnauthorizedCannotRemoveSupportedAsset" test/P301_UnauthorizedRemovalProof.t.sol
+          echo "P301 access-control test found."
 
-      - name: Run read-only fork diagnostics
+      - name: Run read-only fork access-control test
         shell: bash
         run: |
           set -euo pipefail
+
           echo "LIVE_TRADING=PROHIBITED"
           echo "MAINNET_TRANSACTIONS=NONE"
-          echo "TEST_MODE=READ_ONLY_FORK_DIAGNOSTICS"
+          echo "TEST_MODE=LOCAL_FORK_SIMULATION"
+
           forge test \
             --match-path test/P301_UnauthorizedRemovalProof.t.sol \
-            --match-test test_DiagnoseTargetReadCalls \
+            --match-test test_UnauthorizedCannotRemoveSupportedAsset \
             -vvv
 
       - name: Record validation status
         if: always()
         shell: bash
         run: |
-          echo "Execution mode: read-only fork diagnostics"
+          echo "Execution mode: local fork simulation"
           echo "Live trading: prohibited"
           echo "Mainnet transactions: none"
