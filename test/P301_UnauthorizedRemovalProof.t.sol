@@ -15,7 +15,7 @@ contract P301_ForkDiagnostic is Test {
         vm.createSelectFork(vm.envString("ETH_RPC_URL"));
     }
 
-    function test_DiagnoseTargetCalls() public view {
+    function test_DiagnoseTargetCalls() public {
         emit log_named_uint("chainId", block.chainid);
         emit log_named_uint("forkBlock", block.number);
         emit log_named_uint("targetCodeLength", TARGET.code.length);
@@ -44,7 +44,10 @@ contract P301_ForkDiagnostic is Test {
                     USDC
                 )
             );
-        emit log_named_uint("isSupportedAssetCallSuccess", assetOk ? 1 : 0);
+        emit log_named_uint(
+            "isSupportedAssetCallSuccess",
+            assetOk ? 1 : 0
+        );
         emit log_named_bytes("isSupportedAssetRawData", assetData);
     }
 }
