@@ -41,8 +41,8 @@ jobs:
 
       - name: Prepare Foundry project
         shell: bash
-  
-
+        run: |
+          set -euo pipefail
           if [ ! -f foundry.toml ]; then
             cat > foundry.toml <<'EOF'
           [profile.default]
@@ -54,13 +54,10 @@ jobs:
           solc_version = "0.8.20"
           EOF
           fi
-
           mkdir -p lib
-
           if [ ! -f lib/forge-std/src/Test.sol ]; then
             forge install foundry-rs/forge-std --no-commit
           fi
-
           forge --version
 
       - name: Verify diagnostic test exists
@@ -68,8 +65,7 @@ jobs:
         run: |
           set -euo pipefail
           test -f test/P301_UnauthorizedRemovalProof.t.sol
-          grep -q "function test_DiagnoseTargetReadCalls" \
-            test/P301_UnauthorizedRemovalProof.t.sol
+          grep -q "function test_DiagnoseTargetReadCalls" test/P301_UnauthorizedRemovalProof.t.sol
           echo "Diagnostic test found."
 
       - name: Run read-only fork diagnostics
@@ -79,7 +75,6 @@ jobs:
           echo "LIVE_TRADING=PROHIBITED"
           echo "MAINNET_TRANSACTIONS=NONE"
           echo "TEST_MODE=READ_ONLY_FORK_DIAGNOSTICS"
-
           forge test \
             --match-path test/P301_UnauthorizedRemovalProof.t.sol \
             --match-test test_DiagnoseTargetReadCalls \
