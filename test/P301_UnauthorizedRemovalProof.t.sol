@@ -1,6 +1,5 @@
-
- // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 
@@ -15,18 +14,18 @@ contract P301_ForkDiagnostic is Test {
         vm.createSelectFork(vm.envString("ETH_RPC_URL"));
     }
 
-    function test_DiagnoseTargetCalls() public {
+    function test_DiagnoseTargetReadCalls() public {
         emit log_named_uint("chainId", block.chainid);
         emit log_named_uint("forkBlock", block.number);
         emit log_named_uint("targetCodeLength", TARGET.code.length);
         emit log_named_bytes32("targetCodeHash", TARGET.codehash);
 
-        (bool ownerOk, bytes memory ownerData) =
+        (bool ownerOK, bytes memory ownerData) =
             TARGET.staticcall(abi.encodeWithSignature("owner()"));
-        emit log_named_uint("ownerCallSuccess", ownerOk ? 1 : 0);
-        emit log_named_bytes("ownerRawData", ownerData);
+        emit log_named_uint("ownerCallSuccess", ownerOK ? 1 : 0);
+        emit log_named_bytes("ownerReturnData", ownerData);
 
-        (bool roleOk, bytes memory roleData) =
+        (bool roleOK, bytes memory roleData) =
             TARGET.staticcall(
                 abi.encodeWithSignature(
                     "hasRole(bytes32,address)",
@@ -34,20 +33,19 @@ contract P301_ForkDiagnostic is Test {
                     address(1)
                 )
             );
-        emit log_named_uint("hasRoleCallSuccess", roleOk ? 1 : 0);
-        emit log_named_bytes("hasRoleRawData", roleData);
+        emit log_named_uint("hasRoleCallSuccess", roleOK ? 1 : 0);
+        emit log_named_bytes("hasRoleReturnData", roleData);
 
-        (bool assetOk, bytes memory assetData) =
+        (bool assetOK, bytes memory assetData) =
             TARGET.staticcall(
                 abi.encodeWithSignature(
                     "isSupportedAsset(address)",
                     USDC
                 )
             );
-        emit log_named_uint(
-            "isSupportedAssetCallSuccess",
-            assetOk ? 1 : 0
-        );
-        emit log_named_bytes("isSupportedAssetRawData", assetData);
+        emit log_named_uint("isSupportedAssetCallSuccess", assetOK ? 1 : 0);
+        emit log_named_bytes("isSupportedAssetReturnData", assetData);
+
+        assertTrue(TARGET.code.length > 0, "Target has no code");
     }
 }
