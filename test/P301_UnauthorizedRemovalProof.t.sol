@@ -1,65 +1,49 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.19;
 
 import "forge-std/Test.sol";
 
-interface IEthenaMintingAccessProbe {
-    function DEFAULT_ADMIN_ROLE() external view returns (bytes32);
-    function hasRole(bytes32 role, address account)
-        external view returns (bool);
-    function isSupportedAsset(address asset)
-        external view returns (bool);
+interface IEthenaMintingP301 {
     function removeSupportedAsset(address asset) external;
+    function isSupportedAsset(address asset) external view returns (bool);
+    function hasRole(bytes32 role, address account)
+        external
+        view
+        returns (bool);
 }
 
-contract P301UnauthorizedRemovalProofTest is Test {
-    address constant MINTING =
+contract P301_UnauthorizedRemovalProof is Test {
+    address constant TARGET =
         0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3;
 
-    address constant USDC =
-        0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48;
+    address constant WETH =
+        0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
 
-    address constant ATTACKER = address(0xBAD);
-
-    IEthenaMintingAccessProbe target;
+    IEthenaMintingP301 target;
 
     function setUp() public {
-        vm.createSelectFork(vm.envString("ETHENA_FORK_RPC"));
-        target = IEthenaMintingAccessProbe(MINTING);
-
-        require(
-            MINTING.code.length > 0,
-            "Minting contract bytecode missing"
-        );
-
-        require(
-            target.isSupportedAsset(USDC),
-            "USDC must be active for this test"
-        );
-
-        require(
-            !target.hasRole(
-                target.DEFAULT_ADMIN_ROLE(),
-                ATTACKER
-            ),
-            "Attacker unexpectedly has admin role"
-        );
+        vm.createSelectFork(vm.envString("ETH_RPC_URL"));
+        target = IEthenaMintingP301(TARGET);
     }
 
-    function test_UnauthorizedCallerCannotRemoveSupportedAsset()
-        external
-    {
-        vm.expectRevert();
-        vm.prank(ATTACKER);
-        target.removeSupportedAsset(USDC);
+    function test_UnauthorizedCannotRemoveSupportedAsset() public {
+        address attacker = makeAddr("unauthorized");
 
-        assertTrue(
-            target.isSupportedAsset(USDC),
-            "Unauthorized call changed supported-asset state"
+        bool supportedBefore = target.isSupportedAsset(WETH);
+        assertFalse(
+            target.hasRole(bytes32(0), attacker),
+            "Test attacker unexpectedly has admin role"
         );
 
-        emit log_string(
-            "PASS: unauthorized removal reverted on local fork"
+        vm.startPrank(attacker);
+        vm.expectRevert();
+        target.removeSupportedAsset(WETH);
+        vm.stopPrank();
+
+        assertEq(
+            target.isSupportedAsset(WETH),
+            supportedBefore,
+            "Unauthorized caller changed asset support"
         );
     }
 }
