@@ -1,0 +1,230 @@
+
+name: Ethena P30.1 Asset History Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  asset-history:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Read AssetAdded and AssetRemoved history
+        env:
+          ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
+          ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          import os
+          import json
+          import time
+          import urllib.parse
+          import urllib.request
+          import subprocess
+
+          rpc = os.environ["ETHENA_FORK_RPC"].strip()
+          api_key = os.environ["ETHERSCAN_API_KEY"].strip()
+
+          contract = "0xe3490297a08d6fc8da46edb7b6142e4f461b62d3"
+          assets = {
+              "WETH": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+              "USDe": "0x4c9edd5852cd905f086c759e8383e09bff1e68b3",
+          }
+
+          def rpc_call(method, params):
+              payload = json.dumps({
+                  "jsonrpc": "2.0",
+                  "id": 1,
+                  "method": method,
+                  "params": params
+              }).encode()
+
+              req = urllib.request.Request(
+                  rpc,
+                  data=payload,
+                  headers={"Content-Type": "application/json"}
+              )
+
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  data = json.load(response)
+
+              if "error" in data:
+                  raise RuntimeError(str(data["error"]))
+
+              return data["result"]
+
+          def topic(signature):
+              return subprocess.check_output(
+                  ["cast", "keccak", signature],
+                  text=True
+              ).strip().lower()
+
+          latest = int(rpc_call("eth_blockNumber", []), 16)
+
+          if rpc_call("eth_getCode", [contract, hex(latest)]) == "0x":
+              raise RuntimeError("Contract bytecode not found at latest block")
+
+          # Find the first block containing contract bytecode.
+          low, high = 0, latest
+          while low < high:
+              mid = (low + high) // 2
+              code = rpc_call("eth_getCode", [contract, hex(mid)])
+              if code == "0x":
+                  low = mid + 1
+              else:
+                  high = mid
+
+          deployment = low
+
+          print("Contract:", contract)
+          print("Deployment block:", deployment)
+          print("Latest block:", latest)
+          print("Mode: READ ONLY")
+          print("")
+
+          signatures = {
+              "AssetAdded": topic("AssetAdded(address)"),
+              "AssetRemoved": topic("AssetRemoved(address)")
+          }
+
+          last_request = 0.0
+
+          def get_logs(event_topic, asset_topic):
+              global last_request
+
+              all_logs = []
+              page = 1
+
+              while True:
+                  params = {
+                      "chainid": "1",
+                      "module": "logs",
+                      "action": "getLogs",
+                      "fromBlock": str(deployment),
+                      "toBlock": str(latest),
+                      "address": contract,
+                      "topic0": event_topic,
+                      "topic1": asset_topic,
+                      "topic0_1_opr": "and",
+                      "page": str(page),
+                      "offset": "1000",
+                      "apikey": api_key
+                  }
+
+                  url = "https://api.etherscan.io/v2/api?" + \
+                      urllib.parse.urlencode(params)
+
+                  # Respect a modest request interval.
+                  delay = 0.75 - (time.monotonic() - last_request)
+                  if delay > 0:
+                      time.sleep(delay)
+
+                  req = urllib.request.Request(
+                      url,
+                      headers={"User-Agent": "P301-Asset-History-Audit/1.0"}
+                  )
+
+                  with urllib.request.urlopen(req, timeout=40) as response:
+                      data = json.load(response)
+
+                  last_request = time.monotonic()
+                  result = data.get("result", [])
+                  message = str(data.get("message", "")).lower()
+                  result_text = str(result).lower()
+
+                  if data.get("status") != "1":
+                      if "no records found" in message + result_text:
+                          break
+                      raise RuntimeError(
+                          "Etherscan logs request failed: " +
+                          str(data)[:1000]
+                      )
+
+                  if not isinstance(result, list):
+                      raise RuntimeError(
+                          "Unexpected logs response: " + repr(result)[:500]
+                      )
+
+                  all_logs.extend(result)
+
+                  if len(result) < 1000:
+                      break
+
+                  page += 1
+
+              return all_logs
+
+          history = []
+
+          for asset_name, asset_address in assets.items():
+              indexed_address = "0x" + asset_address[2:].lower().rjust(64, "0")
+
+              print("=== " + asset_name + " " + asset_address + " ===")
+
+              asset_events = []
+
+              for event_name, event_topic in signatures.items():
+                  logs = get_logs(event_topic, indexed_address)
+
+                  for log in logs:
+                      asset_events.append({
+                          "event": event_name,
+                          "block": int(log["blockNumber"], 16),
+                          "transaction": log["transactionHash"],
+                          "log_index": int(log["logIndex"], 16)
+                      })
+
+              asset_events.sort(
+                  key=lambda x: (x["block"], x["log_index"])
+              )
+
+              if not asset_events:
+                  print("No matching AssetAdded/AssetRemoved logs returned.")
+                  print("This does not prove the asset was never active.")
+              else:
+                  for event in asset_events:
+                      print(
+                          event["event"],
+                          "| block:", event["block"],
+                          "| tx:", event["transaction"],
+                          "| logIndex:", event["log_index"]
+                      )
+
+              history.append({
+                  "asset": asset_name,
+                  "address": asset_address,
+                  "events": asset_events
+              })
+
+              print("")
+
+          with open("asset-history-report.json", "w") as report:
+              json.dump({
+                  "contract": contract,
+                  "deployment_block": deployment,
+                  "latest_block": latest,
+                  "mode": "READ_ONLY",
+                  "history": history
+              }, report, indent=2)
+
+          print("Report written to asset-history-report.json")
+          print("No transactions sent; no contract state changed.")
+          PY
+
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethena-p301-asset-history
+          path: asset-history-report.json
+          if-no-files-found: warn
+          retention-days: 14
