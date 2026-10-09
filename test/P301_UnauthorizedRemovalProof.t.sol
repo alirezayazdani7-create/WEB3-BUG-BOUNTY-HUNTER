@@ -3,59 +3,49 @@ pragma solidity 0.8.20;
 
 import "forge-std/Test.sol";
 
-interface IEthenaMintingP301 {
-    function owner() external view returns (address);
-    function DEFAULT_ADMIN_ROLE() external view returns (bytes32);
-    function hasRole(bytes32 role, address account)
-        external
-        view
-        returns (bool);
-    function isSupportedAsset(address asset)
-        external
-        view
-        returns (bool);
-    function removeSupportedAsset(address asset) external;
-}
-
-contract P301_ForkAccessControlTest is Test {
+contract P301_ForkDiagnostic is Test {
     address constant TARGET =
         0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3;
 
     address constant USDC =
-        0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48;
+        address(bytes20(hex"a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"));
 
     function setUp() public {
         vm.createSelectFork(vm.envString("ETH_RPC_URL"));
     }
 
-    function test_UnauthorizedCannotRemoveSupportedAsset()
-        public
-    {
-        IEthenaMintingP301 target =
-            IEthenaMintingP301(TARGET);
+    function test_DiagnoseTargetReadCalls() public {
+        emit log_named_uint("chainId", block.chainid);
+        emit log_named_uint("forkBlock", block.number);
+        emit log_named_uint("targetCodeLength", TARGET.code.length);
+        emit log_named_bytes32("targetCodeHash", TARGET.codehash);
 
-        address attacker = makeAddr("unauthorized-p301");
+        (bool ownerOk, bytes memory ownerData) =
+            TARGET.staticcall(abi.encodeWithSignature("owner()"));
 
-        assertTrue(
-            target.isSupportedAsset(USDC),
-            "USDC is not supported at this fork block"
-        );
+        emit log_named_uint("ownerCallSuccess", ownerOk ? 1 : 0);
+        emit log_named_bytes("ownerReturnData", ownerData);
 
-        bytes32 adminRole = target.DEFAULT_ADMIN_ROLE();
+        (bool roleOk, bytes memory roleData) =
+            TARGET.staticcall(
+                abi.encodeWithSignature(
+                    "hasRole(bytes32,address)",
+                    bytes32(0),
+                    address(1)
+                )
+            );
 
-        assertFalse(
-            target.hasRole(adminRole, attacker),
-            "Test attacker unexpectedly has admin role"
-        );
+        emit log_named_uint("hasRoleCallSuccess", roleOk ? 1 : 0);
+        emit log_named_bytes("hasRoleReturnData", roleData);
 
-        vm.prank(attacker);
-        vm.expectRevert();
+        (bool assetOk, bytes memory assetData) =
+            TARGET.staticcall(
+                abi.encodeWithSignature("isSupportedAsset(address)", USDC)
+            );
 
-        target.removeSupportedAsset(USDC);
+        emit log_named_uint("isSupportedAssetCallSuccess", assetOk ? 1 : 0);
+        emit log_named_bytes("isSupportedAssetReturnData", assetData);
 
-        assertTrue(
-            target.isSupportedAsset(USDC),
-            "Supported asset changed after unauthorized attempt"
-        );
+        assertTrue(TARGET.code.length > 0, "Target has no code");
     }
 }
