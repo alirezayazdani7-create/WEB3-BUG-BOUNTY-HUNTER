@@ -50,13 +50,14 @@ contract P301MintWETHAccountingDiscoveryTest is Test {
 
     function setUp() public {
         vm.createSelectFork(vm.envString("ETHENA_FORK_RPC"));
+
         require(
             MINTING.code.length > 0,
             "Minting contract bytecode missing"
         );
     }
 
-    function test_P301_Diagnostic_SupportedAssets() external view {
+    function test_P301_Diagnostic_SupportedAssets() external {
         IP301AssetConfig target = IP301AssetConfig(MINTING);
 
         address[5] memory assets = [
@@ -83,11 +84,13 @@ contract P301MintWETHAccountingDiscoveryTest is Test {
             emit log_named_address("Asset", assets[i]);
             emit log_named_uint("Token type", tokenType);
             emit log_named_uint("Active (1=yes)", active ? 1 : 0);
-            emit log_named_uint("Supported (1=yes)", supported ? 1 : 0);
+            emit log_named_uint(
+                "Supported (1=yes)",
+                supported ? 1 : 0
+            );
             emit log_named_uint("Max mint per block", maxMint);
             emit log_named_uint("Max redeem per block", maxRedeem);
 
-            // Check consistency between the public views.
             assertEq(
                 supported,
                 active,
@@ -97,7 +100,6 @@ contract P301MintWETHAccountingDiscoveryTest is Test {
             if (active) {
                 supportedCount++;
             } else {
-                // Removed/inactive assets should have cleared config.
                 assertEq(maxMint, 0, "Inactive asset has mint limit");
                 assertEq(maxRedeem, 0, "Inactive asset has redeem limit");
             }
@@ -107,7 +109,7 @@ contract P301MintWETHAccountingDiscoveryTest is Test {
         emit log_string("READ-ONLY DIAGNOSTIC: no mint attempted");
     }
 
-    function test_P301_Diagnostic_GlobalLimits() external view {
+    function test_P301_Diagnostic_GlobalLimits() external {
         IP301AssetConfig target = IP301AssetConfig(MINTING);
 
         (
