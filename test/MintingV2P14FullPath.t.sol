@@ -881,6 +881,6 @@ assertTrue(
     actualError != bytes4(0),
     "revert selector is zero"
 );
-        );
+        
     }
 }
