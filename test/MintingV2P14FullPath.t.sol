@@ -861,16 +861,26 @@ contract MintingV2P14FullPathTest {
                 )
             );
 
+assertTrue(
+    !ok,
+    "full mint path accepted 100-unit gap"
+);
 
-        assertTrue(
-            !ok,
-            "full mint path accepted 100-unit gap"
-        );
+assertTrue(
+    revertData.length >= 4,
+    "revert data is missing an error selector"
+);
 
+bytes4 actualError;
 
-        assertTrue(
-            revertData.length > 0,
-            "100-gap mint reverted without diagnostic data"
+assembly {
+    actualError := mload(add(revertData, 32))
+}
+
+assertTrue(
+    actualError != bytes4(0),
+    "revert selector is zero"
+);
         );
     }
 }
