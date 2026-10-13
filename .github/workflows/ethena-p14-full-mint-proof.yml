@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   p14-validation:
-    name: Prepare Foundry and Run Existing P14 Test
+    name: Isolated Foundry P14 and P16 Tests
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -31,78 +31,34 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           test "$LIVE_TRADING" = "false"
           test "$MAINNET_TRANSACTIONS" = "NONE"
           test "$EXECUTION_MODE" = "LOCAL_FORK_ONLY"
           test "$AUTHORIZATION" = "NOT_AUTHORIZED"
-
           echo "SAFETY_CHECK=PASS"
-          echo "LIVE_TRADING=PROHIBITED"
-          echo "MAINNET_TRANSACTIONS=NONE"
-          echo "AUTHORIZATION=NOT_AUTHORIZED"
-
-      - name: Inspect repository
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "=== REPOSITORY ROOT ==="
-          pwd
-          ls -la
-
-          echo "=== REQUIRED TEST FILES ==="
-          test -f test/MintingV2P14FullPath.t.sol
-          test -f test/MintingV2P16SignatureBinding.t.sol
-
-          echo "P14_TEST=FOUND"
-          echo "P16_SIGNATURE_TEST=FOUND"
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: stable
 
-      - name: Prepare Foundry configuration
+      - name: Verify existing test sources
         shell: bash
         run: |
           set -euo pipefail
-
-          if [ ! -f foundry.toml ]; then
-            cat > foundry.toml <<'EOF'
-          [profile.default]
-          src = "src"
-          test = "test"
-          script = "script"
-          out = "out"
-          libs = ["lib"]
-          solc_version = "0.8.20"
-          EOF
-            echo "FOUNDRY_CONFIG=CREATED"
-          else
-            echo "FOUNDRY_CONFIG=EXISTING"
-          fi
-
-          mkdir -p lib
-
-          if [ ! -f lib/forge-std/src/Test.sol ]; then
-            forge install foundry-rs/forge-std --no-commit
-          fi
-
-          forge --version
+          test -s test/MintingV2P14FullPath.t.sol
+          test -s test/MintingV2P16SignatureBinding.t.sol
+          echo "P14_TEST_SOURCE=FOUND"
+          echo "P16_SIGNATURE_TEST_SOURCE=FOUND"
 
       - name: Validate RPC configuration
         shell: bash
         run: |
           set -euo pipefail
-
           if [ -z "${ETH_RPC_URL:-}" ]; then
             echo "::error::ETH_RPC_URL secret is missing."
-            echo "RESULT=INCONCLUSIVE"
-            echo "REASON=RPC_CONFIGURATION_MISSING"
             exit 1
           fi
-
           echo "RPC_CONFIGURATION=AVAILABLE"
 
       - name: Start isolated local Anvil fork
@@ -120,7 +76,6 @@ jobs:
           echo "$!" > /tmp/anvil-p14.pid
 
           READY=0
-
           for i in $(seq 1 45); do
             if cast chain-id \
               --rpc-url http://127.0.0.1:8545 \
@@ -128,12 +83,10 @@ jobs:
               READY=1
               break
             fi
-
             sleep 1
           done
 
           if [ "$READY" -ne 1 ]; then
-            echo "::error::Local Anvil fork did not start."
             cat /tmp/anvil-p14.log
             exit 1
           fi
@@ -142,59 +95,91 @@ jobs:
             --rpc-url http://127.0.0.1:8545)"
 
           test "$CHAIN_ID" = "31337"
-
           echo "LOCAL_ANVIL=READY"
-          echo "LOCAL_CHAIN_ID=$CHAIN_ID"
 
-      - name: Compile Solidity tests
+      - name: Create isolated Foundry workspace
         shell: bash
         run: |
           set -euo pipefail
 
-          forge build
+          LAB_DIR="$RUNNER_TEMP/ethena-p14-lab"
+          mkdir -p "$LAB_DIR/test" "$LAB_DIR/src"
 
-      - name: Run P14 full-path tests on local fork
+          cp test/MintingV2P14FullPath.t.sol \
+            "$LAB_DIR/test/"
+
+          cp test/MintingV2P16SignatureBinding.t.sol \
+            "$LAB_DIR/test/"
+
+          cat > "$LAB_DIR/foundry.toml" <<'EOF'
+          [profile.default]
+          src = "src"
+          test = "test"
+          out = "out"
+          libs = []
+          solc_version = "0.8.26"
+          auto_detect_solc = false
+          EOF
+
+          echo "$LAB_DIR" > \
+            "$RUNNER_TEMP/ethena-p14-lab-path"
+
+          echo "ISOLATED_WORKSPACE=READY"
+
+      - name: Compile isolated test sources
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "TEST_SUITE=P14_FULL_PATH"
-          echo "NETWORK=LOCAL_ANVIL_FORK"
+          LAB_DIR="$(cat \
+            "$RUNNER_TEMP/ethena-p14-lab-path")"
+
+          cd "$LAB_DIR"
+          forge build --force
+
+      - name: Run P14 full-path tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          LAB_DIR="$(cat \
+            "$RUNNER_TEMP/ethena-p14-lab-path")"
+
+          cd "$LAB_DIR"
 
           forge test \
             --fork-url http://127.0.0.1:8545 \
             --match-path test/MintingV2P14FullPath.t.sol \
             -vvvv
 
-      - name: Run P16 signature-binding tests on local fork
+      - name: Run P16 signature-binding tests
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "TEST_SUITE=P16_SIGNATURE_BINDING"
-          echo "NETWORK=LOCAL_ANVIL_FORK"
+          LAB_DIR="$(cat \
+            "$RUNNER_TEMP/ethena-p14-lab-path")"
+
+          cd "$LAB_DIR"
 
           forge test \
             --fork-url http://127.0.0.1:8545 \
             --match-path test/MintingV2P16SignatureBinding.t.sol \
             -vvvv
 
-      - name: Record final status
+      - name: Record validation summary
         if: always()
         shell: bash
         run: |
           {
             echo "## Ethena P14 Validation"
             echo ""
-            echo "- Execution mode: local Anvil fork"
-            echo "- Mainnet transactions: none"
-            echo "- Live trading: prohibited"
-            echo "- Authorization: not authorized"
-            echo "- P14 test: inspect preceding step"
-            echo "- P16 signature test: inspect preceding step"
-            echo ""
-            echo "Passing tests alone do not prove a vulnerability."
-            echo "A vulnerability requires reproducible security impact."
+            echo "- Mode: Local Anvil fork"
+            echo "- Mainnet transactions: NONE"
+            echo "- Live execution: PROHIBITED"
+            echo "- Authorization: NOT_AUTHORIZED"
+            echo "- Review preceding steps for actual test results."
+            echo "- Passing tests do not establish exploitability."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Stop local Anvil
@@ -202,7 +187,7 @@ jobs:
         shell: bash
         run: |
           if [ -f /tmp/anvil-p14.pid ]; then
-            kill "$(cat /tmp/anvil-p14.pid)" 2>/dev/null || true
+            kill "$(cat /tmp/anvil-p14.pid)" \
+              2>/dev/null || true
           fi
-
           echo "LOCAL_ANVIL_STOPPED"
