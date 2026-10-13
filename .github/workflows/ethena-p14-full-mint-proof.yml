@@ -1,0 +1,117 @@
+name: Ethena P14 Full Mint Proof - Local Fork Only
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ethena-p14-full-mint-proof
+  cancel-in-progress: false
+
+jobs:
+  p14-full-mint-proof:
+    name: Local Fork Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      LIVE_TRADING: "false"
+      MAINNET_EXECUTION: "false"
+      AUTHORIZATION: "NOT_AUTHORIZED"
+      FOUNDRY_DISABLE_NIGHTLY_WARNING: "true"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify safety configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test "$LIVE_TRADING" = "false"
+          test "$MAINNET_EXECUTION" = "false"
+          test "$AUTHORIZATION" = "NOT_AUTHORIZED"
+
+          echo "SAFETY_CONFIGURATION=PASS"
+          echo "LIVE_TRADING=PROHIBITED"
+          echo "MAINNET_EXECUTION=PROHIBITED"
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Verify test file exists
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -f "test/EthenaP14FullMintProof.t.sol" ]; then
+            echo "::error::Required test file is missing."
+            exit 1
+          fi
+
+          echo "TEST_FILE=FOUND"
+
+      - name: Verify project configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -f "foundry.toml" ]; then
+            echo "::error::foundry.toml is missing."
+            exit 1
+          fi
+
+          echo "FOUNDRY_CONFIG=FOUND"
+
+      - name: Compile project
+        shell: bash
+        run: |
+          set -euo pipefail
+          forge build
+
+      - name: Check required RPC configuration
+        shell: bash
+        env:
+          ETHEREUM_RPC_URL: ${{ secrets.ETHEREUM_RPC_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${ETHEREUM_RPC_URL:-}" ]; then
+            echo "RESULT=INCONCLUSIVE"
+            echo "REASON=ETHEREUM_RPC_URL secret is not configured."
+            echo "No test was executed."
+            exit 1
+          fi
+
+          echo "RPC_CONFIGURATION=AVAILABLE"
+
+      - name: Run P14 local-fork test
+        shell: bash
+        env:
+          ETHEREUM_RPC_URL: ${{ secrets.ETHEREUM_RPC_URL }}
+        run: |
+          set -euo pipefail
+
+          forge test \
+            --fork-url "$ETHEREUM_RPC_URL" \
+            --match-path test/EthenaP14FullMintProof.t.sol \
+            -vvvv
+
+      - name: Record validation status
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Ethena P14 Full Mint Proof"
+            echo ""
+            echo "- Live trading: PROHIBITED"
+            echo "- Mainnet transactions: PROHIBITED"
+            echo "- Authorization: NOT_AUTHORIZED"
+            echo "- Test execution status: see preceding steps"
+            echo ""
+            echo "A passing test does not, by itself, prove"
+            echo "or disprove a security vulnerability."
+          } >> "$GITHUB_STEP_SUMMARY"
