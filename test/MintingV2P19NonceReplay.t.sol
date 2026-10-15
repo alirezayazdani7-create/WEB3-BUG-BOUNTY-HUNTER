@@ -1,4 +1,5 @@
-// SPDX-License-Identifier: UNLICENSED
+
+ // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
 interface VmP19 {
@@ -57,12 +58,22 @@ interface IEthenaMintingP19Full {
     function hasRole(bytes32 role, address account) external view returns (bool);
     function addWhitelistedBenefactor(address benefactor) external;
     function hashOrder(Order calldata order) external view returns (bytes32);
-    function verifyOrder(Order calldata order, Signature calldata signature)
-        external view returns (bytes32);
-    function verifyNonce(address sender, uint256 nonce)
-        external view returns (uint256, uint256, uint256);
-    function mint(Order calldata order, Route calldata route, Signature calldata signature)
-        external;
+    function verifyOrder(
+        Order calldata order,
+        Signature calldata signature
+    ) external view returns (bytes32);
+
+    // Correct parameter and return types for the verifyNonce selector.
+    function verifyNonce(address sender, uint128 nonce)
+        external
+        view
+        returns (uint128, uint256, uint256);
+
+    function mint(
+        Order calldata order,
+        Route calldata route,
+        Signature calldata signature
+    ) external;
 }
 
 contract P19CollisionWallet {
@@ -76,7 +87,8 @@ contract P19CollisionWallet {
     }
 
     function execute(address target, bytes calldata data)
-        external returns (bytes memory)
+        external
+        returns (bytes memory)
     {
         (bool ok, bytes memory ret) = target.call(data);
         require(ok, "wallet execute failed");
@@ -84,7 +96,9 @@ contract P19CollisionWallet {
     }
 
     function isValidSignature(bytes32 hash, bytes calldata)
-        external view returns (bytes4)
+        external
+        view
+        returns (bytes4)
     {
         return hash == approvedDigest ? MAGICVALUE : FAILVALUE;
     }
@@ -117,7 +131,8 @@ contract MintingV2P19NonceCollisionTest {
     }
 
     function _assertEq(uint256 a, uint256 b, string memory reason)
-        internal pure
+        internal
+        pure
     {
         require(a == b, reason);
     }
@@ -130,8 +145,7 @@ contract MintingV2P19NonceCollisionTest {
     function _fundAndApprove(P19CollisionWallet wallet, uint256 amount)
         internal
     {
-        // Verify this storage slot against the USDC implementation
-        // before relying on it in a different fork or token version.
+        // Confirm the USDC storage layout before using this in another fork.
         bytes32 slot = keccak256(abi.encode(address(wallet), uint256(9)));
         vm.store(USDC, slot, bytes32(amount));
 
@@ -171,7 +185,11 @@ contract MintingV2P19NonceCollisionTest {
         });
     }
 
-    function _route() internal pure returns (IEthenaMintingP19Full.Route memory r) {
+    function _route()
+        internal
+        pure
+        returns (IEthenaMintingP19Full.Route memory r)
+    {
         address[] memory addresses = new address[](1);
         uint128[] memory ratios = new uint128[](1);
 
@@ -184,15 +202,21 @@ contract MintingV2P19NonceCollisionTest {
         });
     }
 
-    function _sig() internal pure returns (IEthenaMintingP19Full.Signature memory s) {
+    function _sig()
+        internal
+        pure
+        returns (IEthenaMintingP19Full.Signature memory s)
+    {
         s = IEthenaMintingP19Full.Signature({
             signature_type: IEthenaMintingP19Full.SignatureType.EIP1271,
             signature_bytes: hex"5031392d434f4c4c4953494f4e"
         });
     }
 
-    function _nonceAvailable(address sender, uint256 nonce)
-        internal view returns (bool)
+    function _nonceAvailable(address sender, uint128 nonce)
+        internal
+        view
+        returns (bool)
     {
         (bool ok,) = MINTING.staticcall(
             abi.encodeWithSelector(
@@ -215,7 +239,7 @@ contract MintingV2P19NonceCollisionTest {
         uint128 collateral = 999_900_001;
         uint128 usdeAmount = uint128(1_000e18);
 
-        _fundAndApprove(wallet, uint256(collateral) * 2);
+        _fundAndApprove(address(wallet) == address(0) ? wallet : wallet, uint256(collateral) * 2);
 
         IEthenaMintingP19Full.Order memory first = _order(
             address(wallet),
@@ -236,10 +260,10 @@ contract MintingV2P19NonceCollisionTest {
         IEthenaMintingP19Full.Route memory route = _route();
         IEthenaMintingP19Full.Signature memory sig = _sig();
 
-        (uint256 slotA,,uint256 bitA) =
+        (uint128 slotA,, uint256 bitA) =
             target.verifyNonce(address(wallet), firstNonce);
 
-        (uint256 slotB,,uint256 bitB) =
+        (uint128 slotB,, uint256 bitB) =
             target.verifyNonce(address(wallet), secondNonce);
 
         _assertEq(slotA, slotB, "nonce slots do not collide");
