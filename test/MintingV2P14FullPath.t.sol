@@ -1,64 +1,27 @@
-// SPDX-License-Identifier: UNLICENSED
+
+ // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
 interface Vm {
-    function sign(
-        uint256 privateKey,
-        bytes32 digest
-    )
+    function sign(uint256 privateKey, bytes32 digest)
         external
-        returns (
-            uint8 v,
-            bytes32 r,
-            bytes32 s
-        );
+        returns (uint8 v, bytes32 r, bytes32 s);
 
     function prank(address msgSender) external;
 
-    /*
-     * Raw storage write cheatcode.
-     *
-     * IMPORTANT:
-     * This modifies ONLY the local Anvil fork.
-     * It does not modify Ethereum Mainnet.
-     */
-    function store(
-        address target,
-        bytes32 slot,
-        bytes32 value
-    ) external;
+    function store(address target, bytes32 slot, bytes32 value) external;
 }
-
 
 interface IERC20Minimal {
-
-    function balanceOf(
-        address account
-    )
-        external
-        view
-        returns (uint256);
-
-    function approve(
-        address spender,
-        uint256 amount
-    )
-        external
-        returns (bool);
+    function balanceOf(address account) external view returns (uint256);
+    function approve(address spender, uint256 amount) external returns (bool);
 }
-
 
 interface IUSDeMinimal is IERC20Minimal {
-
-    function totalSupply()
-        external
-        view
-        returns (uint256);
+    function totalSupply() external view returns (uint256);
 }
 
-
 interface IEthenaMintingP14 {
-
     enum SignatureType {
         EIP712,
         EIP1271
@@ -70,367 +33,139 @@ interface IEthenaMintingP14 {
     }
 
     struct Order {
-
         string order_id;
-
         OrderType order_type;
-
         uint120 expiry;
-
         uint128 nonce;
-
         address benefactor;
-
         address beneficiary;
-
         address collateral_asset;
-
         uint128 collateral_amount;
-
         uint128 usde_amount;
     }
 
-
     struct Route {
-
         address[] addresses;
-
         uint128[] ratios;
     }
 
-
     struct Signature {
-
         SignatureType signature_type;
-
         bytes signature_bytes;
     }
 
-
-    function usde()
-        external
-        view
-        returns (address);
-
-
-    function hashOrder(
-        Order calldata order
-    )
+    function usde() external view returns (address);
+    function hashOrder(Order calldata order) external view returns (bytes32);
+    function verifyOrder(Order calldata order, Signature calldata signature)
         external
         view
         returns (bytes32);
 
-
-    function verifyOrder(
-        Order calldata order,
-        Signature calldata signature
-    )
-        external
-        view
-        returns (bytes32);
-
-
-    function verifyRoute(
-        Route calldata route
-    )
-        external
-        view
-        returns (bool);
-
+    function verifyRoute(Route calldata route) external view returns (bool);
 
     function verifyStablesLimit(
         uint128 collateralAmount,
         uint128 usdeAmount,
         address collateralAsset,
         OrderType orderType
-    )
-        external
-        view
-        returns (bool);
-
+    ) external view returns (bool);
 
     function mint(
         Order calldata order,
         Route calldata route,
         Signature calldata signature
-    )
-        external;
+    ) external;
 }
 
-
 contract MintingV2P14FullPathTest {
-
-    /*
-     * ============================================================
-     * DEPLOYED CONTRACTS
-     * ============================================================
-     */
-
     address constant MINTING =
         0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3;
-
 
     address constant USDC =
         0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
 
-
-    /*
-     * ============================================================
-     * LOCAL FORK TEST ACTOR
-     * ============================================================
-     *
-     * This is the standard local test account.
-     *
-     * It is NOT a Mainnet key.
-     */
-
     address constant MINTER =
         0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf;
 
-
-    /*
-     * Private key 0x01 derives exactly to MINTER.
-     * It is used ONLY inside the isolated Anvil fork.
-     * It is not a secret and must never be used for Mainnet.
-     */
+    // Local test key only; never use this key on Mainnet.
     uint256 constant MINTER_PRIVATE_KEY = 1;
-
-
-    /*
-     * ============================================================
-     * CUSTODIAN USED BY P14
-     * ============================================================
-     */
 
     address constant CUSTODIAN =
         0x8f0eE0393Eae7fc1638BD7860a3FEc6a663786AE;
 
-
-    /*
-     * ============================================================
-     * HEVM CHEATCODE
-     * ============================================================
-     */
-
-    Vm constant vm =
-        Vm(
-            address(
-                uint160(
-                    uint256(
-                        keccak256(
-                            "hevm cheat code"
-                        )
-                    )
+    Vm constant vm = Vm(
+        address(
+            uint160(
+                uint256(
+                    keccak256("hevm cheat code")
                 )
             )
-        );
-
+        )
+    );
 
     IEthenaMintingP14 constant target =
-        IEthenaMintingP14(
-            MINTING
-        );
+        IEthenaMintingP14(MINTING);
 
+    IERC20Minimal constant usdc = IERC20Minimal(USDC);
 
-    IERC20Minimal constant usdc =
-        IERC20Minimal(
-            USDC
-        );
-
-
-    /*
-     * ============================================================
-     * ASSERTIONS
-     * ============================================================
-     */
-
-    function assertTrue(
-        bool value,
-        string memory reason
-    )
+    function assertTrue(bool value, string memory reason)
         internal
         pure
     {
-        require(
-            value,
-            reason
-        );
+        require(value, reason);
     }
 
-
-    function assertEq(
-        uint256 a,
-        uint256 b,
-        string memory reason
-    )
+    function assertEq(uint256 a, uint256 b, string memory reason)
         internal
         pure
     {
-        require(
-            a == b,
-            reason
-        );
+        require(a == b, reason);
     }
 
-
-    function assertEqAddress(
-        address a,
-        address b,
-        string memory reason
-    )
+    function _sign(IEthenaMintingP14.Order memory order)
         internal
-        pure
+        returns (IEthenaMintingP14.Signature memory sig, bytes32 digest)
     {
-        require(
-            a == b,
-            reason
-        );
+        digest = target.hashOrder(order);
+
+        (uint8 v, bytes32 r, bytes32 s) =
+            vm.sign(MINTER_PRIVATE_KEY, digest);
+
+        sig = IEthenaMintingP14.Signature({
+            signature_type: IEthenaMintingP14.SignatureType.EIP712,
+            signature_bytes: abi.encodePacked(r, s, v)
+        });
     }
-
-
-    /*
-     * ============================================================
-     * SIGN ORDER
-     * ============================================================
-     */
-
-    function _sign(
-        IEthenaMintingP14.Order memory order
-    )
-        internal
-        returns (
-            IEthenaMintingP14.Signature memory sig,
-            bytes32 digest
-        )
-    {
-
-        /*
-         * Ask the deployed contract for the exact
-         * EIP-712 order digest.
-         */
-
-        digest =
-            target.hashOrder(
-                order
-            );
-
-
-        (
-            uint8 v,
-            bytes32 r,
-            bytes32 s
-        ) =
-            vm.sign(
-                MINTER_PRIVATE_KEY,
-                digest
-            );
-
-
-        sig =
-            IEthenaMintingP14.Signature({
-                signature_type:
-                    IEthenaMintingP14.SignatureType.EIP712,
-
-                signature_bytes:
-                    abi.encodePacked(
-                        r,
-                        s,
-                        v
-                    )
-            });
-    }
-
-
-    /*
-     * ============================================================
-     * CUSTODIAN ROUTE
-     * ============================================================
-     */
 
     function _route()
         internal
         pure
-        returns (
-            IEthenaMintingP14.Route memory route
-        )
+        returns (IEthenaMintingP14.Route memory route)
     {
+        address[] memory addresses = new address[](1);
+        uint128[] memory ratios = new uint128[](1);
 
-        address[] memory addresses =
-            new address[](1);
+        addresses[0] = CUSTODIAN;
+        ratios[0] = 10_000;
 
-        uint128[] memory ratios =
-            new uint128[](1);
-
-
-        addresses[0] =
-            CUSTODIAN;
-
-        ratios[0] =
-            10_000;
-
-
-        route =
-            IEthenaMintingP14.Route({
-                addresses:
-                    addresses,
-
-                ratios:
-                    ratios
-            });
+        route = IEthenaMintingP14.Route({
+            addresses: addresses,
+            ratios: ratios
+        });
     }
-
-
-    /*
-     * ============================================================
-     * P14-01
-     *
-     * FULL MINT PATH
-     *
-     * 999,901 micro-USDC
-     *          ↓
-     * 1 USDe
-     *
-     * Expected:
-     * ACCEPT
-     *
-     * Difference from exact parity:
-     *
-     * 1,000,000 - 999,901 = 99
-     * ============================================================
-     */
 
     function test_P14_01_full_mint_accepts_99_unit_gap()
         external
     {
-
-        /*
-         * --------------------------------------------------------
-         * LOCAL FORK FUNDING
-         * --------------------------------------------------------
-         *
-         * USDC is a proxy-based token. Its balance mapping is
-         * balanceAndBlacklistStates at storage slot 9.
-         *
-         * Mapping slot:
-         * keccak256(abi.encode(account, 9))
-         *
-         * This is a raw local-fork state write only.
-         */
-
+        // This storage write affects only the local Anvil fork.
+        // Verify the USDC storage layout before relying on this setup.
         bytes32 usdcBalanceSlot =
-            keccak256(
-                abi.encode(
-                    MINTER,
-                    uint256(9)
-                )
-            );
+            keccak256(abi.encode(MINTER, uint256(9)));
 
         vm.store(
             USDC,
             usdcBalanceSlot,
-            bytes32(
-                uint256(1_000_000)
-            )
+            bytes32(uint256(1_000_000))
         );
 
         assertEq(
@@ -439,245 +174,70 @@ contract MintingV2P14FullPathTest {
             "local USDC balance injection failed"
         );
 
+        vm.prank(MINTER);
+        bool approvalOk = usdc.approve(MINTING, type(uint256).max);
 
-        /*
-         * --------------------------------------------------------
-         * LOCAL USDC APPROVAL
-         * --------------------------------------------------------
-         */
+        assertTrue(approvalOk, "local USDC approval failed");
 
-        vm.prank(
-            MINTER
-        );
-
-
-        bool approvalOk =
-            usdc.approve(
-                MINTING,
-                type(uint256).max
-            );
-
-
-        assertTrue(
-            approvalOk,
-            "local USDC approval failed"
-        );
-
-
-        /*
-         * --------------------------------------------------------
-         * INITIAL STATE
-         * --------------------------------------------------------
-         */
-
-        address usdeAddress =
-            target.usde();
-
+        address usdeAddress = target.usde();
 
         uint256 usdeBefore =
-            IUSDeMinimal(
-                usdeAddress
-            ).balanceOf(
-                MINTER
-            );
-
+            IUSDeMinimal(usdeAddress).balanceOf(MINTER);
 
         uint256 supplyBefore =
-            IUSDeMinimal(
-                usdeAddress
-            ).totalSupply();
+            IUSDeMinimal(usdeAddress).totalSupply();
 
-
-        uint256 benefactorUsdcBefore =
-            usdc.balanceOf(
-                MINTER
-            );
-
-
-        uint256 custodianUsdcBefore =
-            usdc.balanceOf(
-                CUSTODIAN
-            );
-
-
-        /*
-         * --------------------------------------------------------
-         * ORDER
-         * --------------------------------------------------------
-         */
+        uint256 benefactorUsdcBefore = usdc.balanceOf(MINTER);
+        uint256 custodianUsdcBefore = usdc.balanceOf(CUSTODIAN);
 
         IEthenaMintingP14.Order memory order =
             IEthenaMintingP14.Order({
-
-                order_id:
-                    "P14-99-UNIT-GAP",
-
-                order_type:
-                    IEthenaMintingP14.OrderType.MINT,
-
-                expiry:
-                    uint120(
-                        block.timestamp + 1 days
-                    ),
-
-                nonce:
-                    14_990_001,
-
-                benefactor:
-                    MINTER,
-
-                beneficiary:
-                    MINTER,
-
-                collateral_asset:
-                    USDC,
-
-                collateral_amount:
-                    999_901,
-
-                usde_amount:
-                    1e18
+                order_id: "P14-99-UNIT-GAP",
+                order_type: IEthenaMintingP14.OrderType.MINT,
+                expiry: uint120(block.timestamp + 1 days),
+                nonce: 14_990_001,
+                benefactor: MINTER,
+                beneficiary: MINTER,
+                collateral_asset: USDC,
+                collateral_amount: 999_901,
+                usde_amount: 1e18
             });
 
+        IEthenaMintingP14.Route memory route = _route();
 
-        /*
-         * --------------------------------------------------------
-         * ROUTE
-         * --------------------------------------------------------
-         */
-
-        IEthenaMintingP14.Route memory route =
-            _route();
-
-
-        /*
-         * --------------------------------------------------------
-         * CHECK #1
-         *
-         * ROUTE
-         * --------------------------------------------------------
-         */
+        assertTrue(target.verifyRoute(route), "P14 route rejected");
 
         assertTrue(
-            target.verifyRoute(
-                route
-            ),
-            "P14 route rejected"
-        );
-
-
-        /*
-         * --------------------------------------------------------
-         * CHECK #2
-         *
-         * STABLE LIMIT
-         * --------------------------------------------------------
-         */
-
-        bool stableAccepted =
             target.verifyStablesLimit(
                 order.collateral_amount,
                 order.usde_amount,
                 order.collateral_asset,
                 order.order_type
-            );
-
-
-        assertTrue(
-            stableAccepted,
+            ),
             "99-unit gap rejected by stable guard"
         );
 
+        (IEthenaMintingP14.Signature memory sig, bytes32 digest) =
+            _sign(order);
 
-        /*
-         * --------------------------------------------------------
-         * CHECK #3
-         *
-         * EIP-712 SIGNATURE
-         * --------------------------------------------------------
-         */
-
-        (
-            IEthenaMintingP14.Signature memory sig,
-            bytes32 digest
-        ) =
-            _sign(
-                order
-            );
-
-
-        /*
-         * --------------------------------------------------------
-         * CHECK #4
-         *
-         * DEPLOYED SIGNATURE VALIDATION
-         * --------------------------------------------------------
-         */
-
-        bytes32 verifiedDigest =
-            target.verifyOrder(
-                order,
-                sig
-            );
-
+        bytes32 verifiedDigest = target.verifyOrder(order, sig);
 
         assertTrue(
             verifiedDigest == digest,
             "signed order digest mismatch"
         );
 
-
-        /*
-         * --------------------------------------------------------
-         * CHECK #5
-         *
-         * FULL MINT
-         * --------------------------------------------------------
-         */
-
-        vm.prank(
-            MINTER
-        );
-
-
-        target.mint(
-            order,
-            route,
-            sig
-        );
-
-
-        /*
-         * --------------------------------------------------------
-         * FINAL STATE
-         * --------------------------------------------------------
-         */
+        vm.prank(MINTER);
+        target.mint(order, route, sig);
 
         uint256 usdeAfter =
-            IUSDeMinimal(
-                usdeAddress
-            ).balanceOf(
-                MINTER
-            );
-
+            IUSDeMinimal(usdeAddress).balanceOf(MINTER);
 
         uint256 supplyAfter =
-            IUSDeMinimal(
-                usdeAddress
-            ).totalSupply();
+            IUSDeMinimal(usdeAddress).totalSupply();
 
-
-        uint256 benefactorUsdcAfter =
-            usdc.balanceOf(
-                MINTER
-            );
-
-
-        uint256 custodianUsdcAfter =
-            usdc.balanceOf(
-                CUSTODIAN
-            );
-
+        uint256 benefactorUsdcAfter = usdc.balanceOf(MINTER);
+        uint256 custodianUsdcAfter = usdc.balanceOf(CUSTODIAN);
 
         assertEq(
             usdeAfter - usdeBefore,
@@ -685,173 +245,69 @@ contract MintingV2P14FullPathTest {
             "beneficiary USDe delta mismatch"
         );
 
-
         assertEq(
             supplyAfter - supplyBefore,
             1e18,
             "USDe total supply delta mismatch"
         );
 
-
         assertEq(
-            benefactorUsdcBefore -
-                benefactorUsdcAfter,
+            benefactorUsdcBefore - benefactorUsdcAfter,
             999_901,
             "benefactor USDC debit mismatch"
         );
 
-
         assertEq(
-            custodianUsdcAfter -
-                custodianUsdcBefore,
+            custodianUsdcAfter - custodianUsdcBefore,
             999_901,
             "custodian USDC credit mismatch"
         );
 
-
-        uint256 economicGap =
-            1_000_000 -
-            order.collateral_amount;
-
-
         assertEq(
-            economicGap,
+            1_000_000 - order.collateral_amount,
             99,
             "P14 economic gap is not 99"
         );
     }
 
-
-    /*
-     * ============================================================
-     * P14-02
-     *
-     * FULL MINT PATH
-     *
-     * 999,900 micro-USDC
-     *          ↓
-     * 1 USDe
-     *
-     * Expected:
-     * REJECT
-     *
-     * Difference:
-     *
-     * 1,000,000 - 999,900 = 100
-     * ============================================================
-     */
-
     function test_P14_02_full_mint_rejects_100_unit_gap()
         external
     {
-
         IEthenaMintingP14.Order memory order =
             IEthenaMintingP14.Order({
-
-                order_id:
-                    "P14-100-UNIT-GAP",
-
-                order_type:
-                    IEthenaMintingP14.OrderType.MINT,
-
-                expiry:
-                    uint120(
-                        block.timestamp + 1 days
-                    ),
-
-                nonce:
-                    14_990_002,
-
-                benefactor:
-                    MINTER,
-
-                beneficiary:
-                    MINTER,
-
-                collateral_asset:
-                    USDC,
-
-                collateral_amount:
-                    999_900,
-
-                usde_amount:
-                    1e18
+                order_id: "P14-100-UNIT-GAP",
+                order_type: IEthenaMintingP14.OrderType.MINT,
+                expiry: uint120(block.timestamp + 1 days),
+                nonce: 14_990_002,
+                benefactor: MINTER,
+                beneficiary: MINTER,
+                collateral_asset: USDC,
+                collateral_amount: 999_900,
+                usde_amount: 1e18
             });
 
+        IEthenaMintingP14.Route memory route = _route();
 
-        IEthenaMintingP14.Route memory route =
-            _route();
-
-
-        /*
-         * --------------------------------------------------------
-         * PRECONDITION
-         *
-         * STABLE GUARD MUST REJECT
-         * --------------------------------------------------------
-         */
-
-        bool stableAccepted =
-            target.verifyStablesLimit(
-                order.collateral_amount,
-                order.usde_amount,
-                order.collateral_asset,
-                order.order_type
-            );
-
+        bool stableAccepted = target.verifyStablesLimit(
+            order.collateral_amount,
+            order.usde_amount,
+            order.collateral_asset,
+            order.order_type
+        );
 
         assertTrue(
             !stableAccepted,
             "100-unit gap unexpectedly accepted"
         );
 
+        (IEthenaMintingP14.Signature memory sig, bytes32 digest) =
+            _sign(order);
 
-        /*
-         * --------------------------------------------------------
-         * SIGN ORDER
-         * --------------------------------------------------------
-         */
+        assertTrue(digest != bytes32(0), "100-gap order digest is zero");
 
-        (
-            IEthenaMintingP14.Signature memory sig,
-            bytes32 digest
-        ) =
-            _sign(
-                order
-            );
+        vm.prank(MINTER);
 
-
-        /*
-         * verifyOrder() is intentionally NOT called here.
-         *
-         * verifyOrder() itself enforces verifyStablesLimit(),
-         * so this boundary case is expected to revert there.
-         */
-
-        assertTrue(
-            digest != bytes32(0),
-            "100-gap order digest is zero"
-        );
-
-
-        /*
-         * --------------------------------------------------------
-         * EXECUTE FULL MINT
-         *
-         * Expected revert:
-         * InvalidStablePrice
-         * --------------------------------------------------------
-         */
-
-        vm.prank(
-            MINTER
-        );
-
-
-        (
-            bool ok,
-            bytes memory revertData
-        ) =
+        (bool ok, bytes memory revertData) =
             address(target).call(
                 abi.encodeWithSelector(
                     IEthenaMintingP14.mint.selector,
@@ -861,26 +317,25 @@ contract MintingV2P14FullPathTest {
                 )
             );
 
-assertTrue(
-    !ok,
-    "full mint path accepted 100-unit gap"
-);
+        assertTrue(!ok, "full mint path accepted 100-unit gap");
 
-assertTrue(
-    revertData.length >= 4,
-    "revert data is missing an error selector"
-);
+        assertTrue(
+            revertData.length >= 4,
+            "revert data is missing an error selector"
+        );
 
-bytes4 actualError;
+        bytes4 actualError;
 
-assembly {
-    actualError := mload(add(revertData, 32))
-}
+        assembly {
+            actualError := mload(add(revertData, 32))
+        }
 
-assertTrue(
-    actualError != bytes4(0),
-    "revert selector is zero"
-);
-        
+        bytes4 expectedError =
+            bytes4(keccak256("InvalidStablePrice()"));
+
+        require(
+            actualError == expectedError,
+            "unexpected revert selector: expected InvalidStablePrice()"
+        );
     }
 }
