@@ -1,0 +1,102 @@
+name: Ethena Nonce Collision Diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "test/EthenaNonceCollisionDiagnostic.t.sol"
+      - ".github/workflows/ethena-nonce-collision-diagnostic.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  nonce-diagnostic:
+    name: Local Fork Nonce Diagnostic
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Check prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -f test/EthenaNonceCollisionDiagnostic.t.sol
+
+          if [ -z "${ETH_RPC_URL:-}" ]; then
+            echo "::error::ETH_RPC_URL repository secret is missing."
+            exit 1
+          fi
+
+          forge --version
+          anvil --version
+
+      - name: Start isolated local fork
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          anvil \
+            --fork-url "$ETH_RPC_URL" \
+            --chain-id 31337 \
+            --host 127.0.0.1 \
+            --port 8545 \
+            > /tmp/ethena-anvil.log 2>&1 &
+
+          echo $! > /tmp/ethena-anvil.pid
+
+          for i in $(seq 1 30); do
+            if cast chain-id --rpc-url http://127.0.0.1:8545 \
+              2>/dev/null | grep -q 31337; then
+              echo "Local fork is ready."
+              exit 0
+            fi
+            sleep 2
+          done
+
+          cat /tmp/ethena-anvil.log
+          echo "::error::Local fork did not start."
+          exit 1
+
+      - name: Run nonce mapping diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "TEST_MODE=LOCAL_FORK"
+          echo "CHAIN_ID=31337"
+          echo "MAINNET_TRANSACTIONS=NONE"
+          echo "LIVE_EXECUTION=PROHIBITED"
+
+          forge test \
+            --fork-url http://127.0.0.1:8545 \
+            --match-path test/EthenaNonceCollisionDiagnostic.t.sol \
+            -vvvv
+
+      - name: Collect local fork logs on failure
+        if: failure()
+        shell: bash
+        run: |
+          if [ -f /tmp/ethena-anvil.log ]; then
+            cat /tmp/ethena-anvil.log
+          fi
+
+      - name: Stop local fork
+        if: always()
+        shell: bash
+        run: |
+          if [ -f /tmp/ethena-anvil.pid ]; then
+            kill "$(cat /tmp/ethena-anvil.pid)" 2>/dev/null || true
+          fi
