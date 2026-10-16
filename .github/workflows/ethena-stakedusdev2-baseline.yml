@@ -1,4 +1,4 @@
-name: Ethena StakedUSDeV2 baseline tests
+name: Ethena StakedUSDeV2 fuzz validation
 
 on:
   workflow_dispatch:
@@ -21,6 +21,38 @@ jobs:
       - name: Fetch public audit package
         run: git clone --depth 1 https://github.com/chrispyspearbit/ethena-audit-package.git audit-package
 
-      - name: Run local baseline tests
+      - name: Repair fuzz input generation in temporary checkout
         working-directory: audit-package/package/source/bbp-public-assets/contracts
-        run: forge test --match-path "test/foundry/staking/StakedUSDeV2*.t.sol" --no-match-test "testFuzzFairStakeAndUnstakePrices" -vv
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("test/foundry/staking/StakedUSDe.t.sol")
+          source = p.read_text()
+
+          old = """    vm.assume(
+          amount1 >= 100 ether && amount2 > 0 && amount3 > 0 && rewardAmount > 0 && waitSeconds <= 9 hours
+          // 100 trillion USD with 18 decimals
+          && amount1 < 1e32 && amount2 < 1e32 && amount3 < 1e32 && rewardAmount < 1e32
+          );"""
+
+          new = """    amount1 = bound(amount1, 100 ether, 1e32 - 1);
+          amount2 = bound(amount2, 1, 1e32 - 1);
+          amount3 = bound(amount3, 1, 1e32 - 1);
+          rewardAmount = bound(rewardAmount, 1, 1e32 - 1);
+          waitSeconds = bound(waitSeconds, 0, 9 hours);"""
+
+          count = source.count(old)
+          if count != 1:
+              raise SystemExit(
+                  f"Expected exactly one fuzz block, found {count}; no test changes applied."
+              )
+
+          p.write_text(source.replace(old, new, 1))
+          print("Patched one fuzz input block in temporary checkout.")
+          PY
+
+      - name: Run all StakedUSDeV2 tests
+        working-directory: audit-package/package/source/bbp-public-assets/contracts
+        run: forge test --match-path "test/foundry/staking/StakedUSDeV2*.t.sol" -vv
