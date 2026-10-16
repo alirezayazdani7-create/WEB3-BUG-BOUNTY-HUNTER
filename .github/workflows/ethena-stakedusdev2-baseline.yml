@@ -1,0 +1,26 @@
+
+name: Ethena StakedUSDeV2 baseline tests
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  baseline-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout research repository
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Fetch public audit package
+        run: git clone --depth 1 https://github.com/chrispyspearbit/ethena-audit-package.git audit-package
+
+      - name: Run local baseline tests
+        working-directory: audit-package/package/source/bbp-public-assets/contracts
+        run: forge test --match-path "test/foundry/staking/StakedUSDeV2*.t.sol" -vv
