@@ -1,79 +1,79 @@
 name: Ethena Local Fork Validation Queue
 
 'on':
-workflow_dispatch:
-inputs:
-test_suite:
-description: "Local fork test suite"
-required: true
-type: choice
-options:
-- s06
-- u03
-- both
-default: both
+  workflow_dispatch:
+    inputs:
+      test_suite:
+        description: "Local fork test suite"
+        required: true
+        type: choice
+        options:
+          - s06
+          - u03
+          - both
+        default: both
 
 permissions:
-contents: read
+  contents: read
 
 concurrency:
-group: ethena-local-fork-validation
-cancel-in-progress: false
+  group: ethena-local-fork-validation
+  cancel-in-progress: false
 
 jobs:
-validate:
-runs-on: ubuntu-latest
-timeout-minutes: 20
-env:
-FOUNDRY_PROFILE: default
-ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FOUNDRY_PROFILE: default
+      ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
 
-steps:
-  - name: Checkout repository
-    uses: actions/checkout@v4
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-  - name: Check required configuration
-    shell: bash
-    run: |
-      if [ -z "$ETHENA_FORK_RPC" ]; then
-        echo "::error::ETHENA_FORK_RPC secret is missing."
-        exit 1
-      fi
-      echo "RPC secret is configured; its value will not be printed."
+      - name: Check required configuration
+        shell: bash
+        run: |
+          if [ -z "$ETHENA_FORK_RPC" ]; then
+            echo "::error::ETHENA_FORK_RPC secret is missing."
+            exit 1
+          fi
+          echo "RPC secret is configured; its value will not be printed."
 
-  - name: Install Foundry
-    uses: foundry-rs/foundry-toolchain@v1
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
 
-  - name: Record environment
-    shell: bash
-    run: |
-      forge --version
-      git rev-parse HEAD
-      date -u +"%Y-%m-%dT%H:%M:%SZ"
+      - name: Record environment
+        shell: bash
+        run: |
+          forge --version
+          git rev-parse HEAD
+          date -u +"%Y-%m-%dT%H:%M:%SZ"
 
-  - name: Run S06 block-cap tests
-    if: inputs.test_suite == 's06' || inputs.test_suite == 'both'
-    shell: bash
-    run: |
-      forge test \
-        --match-path 'test/MintingV2S06BlockCap.t.sol' \
-        -vvv
+      - name: Run S06 block-cap tests
+        if: inputs.test_suite == 's06' || inputs.test_suite == 'both'
+        shell: bash
+        run: |
+          forge test \
+            --match-path 'test/MintingV2S06BlockCap.t.sol' \
+            -vvv
 
-  - name: Run U03 cross-contract tests
-    if: inputs.test_suite == 'u03' || inputs.test_suite == 'both'
-    shell: bash
-    run: |
-      forge test \
-        --match-path 'test/U03CrossContractV2Probe.t.sol' \
-        -vvv
+      - name: Run U03 cross-contract tests
+        if: inputs.test_suite == 'u03' || inputs.test_suite == 'both'
+        shell: bash
+        run: |
+          forge test \
+            --match-path 'test/U03CrossContractV2Probe.t.sol' \
+            -vvv
 
-  - name: Upload test logs
-    if: always()
-    uses: actions/upload-artifact@v4
-    with:
-      name: ethena-local-fork-validation-logs
-      path: |
-        out/
-        cache/
-      if-no-files-found: ignore
-      retention-days: 7
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethena-local-fork-validation-logs
+          path: |
+            out/
+            cache/
+          if-no-files-found: ignore
+          retention-days: 7
