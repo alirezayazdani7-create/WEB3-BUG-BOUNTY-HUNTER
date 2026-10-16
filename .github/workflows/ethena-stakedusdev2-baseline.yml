@@ -29,11 +29,13 @@ jobs:
           from pathlib import Path
           import re
 
-          p = Path("test/foundry/staking/StakedUSDeV2.cooldownEnabled.t.sol")
-          source = p.read_text()
+          files = [
+              Path("test/foundry/staking/StakedUSDe.t.sol"),
+              Path("test/foundry/staking/StakedUSDeV2.cooldownEnabled.t.sol"),
+          ]
 
           pattern = re.compile(
-              r"    vm\.assume\(\s*"
+              r"vm\.assume\(\s*"
               r"amount1 >= 100 ether && amount2 > 0 && amount3 > 0 && rewardAmount > 0 && waitSeconds <= 9 hours\s*"
               r"// 100 trillion USD with 18 decimals\s*"
               r"&& amount1 < 1e32 && amount2 < 1e32 && amount3 < 1e32 && rewardAmount < 1e32\s*"
@@ -41,21 +43,26 @@ jobs:
               re.MULTILINE,
           )
 
-          replacement = """    amount1 = bound(amount1, 100 ether, 1e32 - 1);
+          replacement = """amount1 = bound(amount1, 100 ether, 1e32 - 1);
               amount2 = bound(amount2, 1, 1e32 - 1);
               amount3 = bound(amount3, 1, 1e32 - 1);
               rewardAmount = bound(rewardAmount, 1, 1e32 - 1);
               waitSeconds = bound(waitSeconds, 0, 9 hours);"""
 
-          source, count = pattern.subn(replacement, source, count=1)
+          for p in files:
+              source = p.read_text()
+              updated, count = pattern.subn(replacement, source, count=1)
 
-          if count != 1:
-              raise SystemExit(
-                  f"Expected one fuzz block in {p}, found {count}; no test changes applied."
-              )
+              if count != 1:
+                  raise SystemExit(
+                      f"Expected one fuzz block in {p}, found {count}; "
+                      "stopping without writing this file."
+                  )
 
-          p.write_text(source)
-          print(f"Patched fuzz input generation in temporary checkout: {p}")
+              p.write_text(updated)
+              print(f"PASS: patched fuzz inputs in {p}")
+
+          print("Both fuzz input patches completed.")
           PY
 
       - name: Run all StakedUSDeV2 tests
