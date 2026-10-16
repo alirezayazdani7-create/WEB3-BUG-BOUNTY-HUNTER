@@ -1,6 +1,6 @@
 name: Ethena Local Fork Validation Queue
 
-on:
+'on':
 workflow_dispatch:
 inputs:
 test_suite:
