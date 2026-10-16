@@ -27,30 +27,35 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
-          p = Path("test/foundry/staking/StakedUSDe.t.sol")
+          p = Path("test/foundry/staking/StakedUSDeV2.cooldownEnabled.t.sol")
           source = p.read_text()
 
-          old = """    vm.assume(
-          amount1 >= 100 ether && amount2 > 0 && amount3 > 0 && rewardAmount > 0 && waitSeconds <= 9 hours
-          // 100 trillion USD with 18 decimals
-          && amount1 < 1e32 && amount2 < 1e32 && amount3 < 1e32 && rewardAmount < 1e32
-          );"""
+          pattern = re.compile(
+              r"    vm\.assume\(\s*"
+              r"amount1 >= 100 ether && amount2 > 0 && amount3 > 0 && rewardAmount > 0 && waitSeconds <= 9 hours\s*"
+              r"// 100 trillion USD with 18 decimals\s*"
+              r"&& amount1 < 1e32 && amount2 < 1e32 && amount3 < 1e32 && rewardAmount < 1e32\s*"
+              r"\);",
+              re.MULTILINE,
+          )
 
-          new = """    amount1 = bound(amount1, 100 ether, 1e32 - 1);
-          amount2 = bound(amount2, 1, 1e32 - 1);
-          amount3 = bound(amount3, 1, 1e32 - 1);
-          rewardAmount = bound(rewardAmount, 1, 1e32 - 1);
-          waitSeconds = bound(waitSeconds, 0, 9 hours);"""
+          replacement = """    amount1 = bound(amount1, 100 ether, 1e32 - 1);
+              amount2 = bound(amount2, 1, 1e32 - 1);
+              amount3 = bound(amount3, 1, 1e32 - 1);
+              rewardAmount = bound(rewardAmount, 1, 1e32 - 1);
+              waitSeconds = bound(waitSeconds, 0, 9 hours);"""
 
-          count = source.count(old)
+          source, count = pattern.subn(replacement, source, count=1)
+
           if count != 1:
               raise SystemExit(
-                  f"Expected exactly one fuzz block, found {count}; no test changes applied."
+                  f"Expected one fuzz block in {p}, found {count}; no test changes applied."
               )
 
-          p.write_text(source.replace(old, new, 1))
-          print("Patched one fuzz input block in temporary checkout.")
+          p.write_text(source)
+          print(f"Patched fuzz input generation in temporary checkout: {p}")
           PY
 
       - name: Run all StakedUSDeV2 tests
