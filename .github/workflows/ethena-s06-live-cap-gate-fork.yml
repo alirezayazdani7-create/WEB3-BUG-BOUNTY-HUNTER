@@ -1,0 +1,57 @@
+
+name: Ethena S06 Live Cap Gate Fork Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  s06-live-cap-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
+      EXECUTION_MODE: LOCAL_FORK_ONLY
+      MAINNET_TRANSACTIONS: "NONE"
+      LIVE_EXECUTION: PROHIBITED
+      SUBMISSION: NOT_PERFORMED
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Validate safe test configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ETHENA_FORK_RPC}"
+          test "${EXECUTION_MODE}" = "LOCAL_FORK_ONLY"
+          test "${MAINNET_TRANSACTIONS}" = "NONE"
+          test "${LIVE_EXECUTION}" = "PROHIBITED"
+          test "${SUBMISSION}" = "NOT_PERFORMED"
+          echo "SAFETY_CONFIGURATION=PASS"
+
+      - name: Run deployed-contract cap gate test on local fork
+        shell: bash
+        run: |
+          set -euo pipefail
+          forge test \
+            --match-path test/EthenaS06LiveCapGateFork.t.sol \
+            --match-test test_S06_AboveCapHitsCapGateBeforeInvalidSignature \
+            -vvvv
+
+      - name: Assert execution remained local-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${EXECUTION_MODE}" = "LOCAL_FORK_ONLY"
+          test "${MAINNET_TRANSACTIONS}" = "NONE"
+          test "${LIVE_EXECUTION}" = "PROHIBITED"
+          test "${SUBMISSION}" = "NOT_PERFORMED"
+          echo "FINAL_SAFETY_STATUS=PASS"
