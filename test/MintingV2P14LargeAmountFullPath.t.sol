@@ -8,7 +8,6 @@ interface VmP14Large {
         returns (uint8 v, bytes32 r, bytes32 s);
 
     function prank(address msgSender) external;
-
     function store(address target, bytes32 slot, bytes32 value) external;
 }
 
@@ -22,15 +21,8 @@ interface IUSDeP14Large is IERC20P14Large {
 }
 
 interface IEthenaMintingP14Large {
-    enum SignatureType {
-        EIP712,
-        EIP1271
-    }
-
-    enum OrderType {
-        MINT,
-        REDEEM
-    }
+    enum SignatureType { EIP712, EIP1271 }
+    enum OrderType { MINT, REDEEM }
 
     struct Order {
         string order_id;
@@ -55,19 +47,14 @@ interface IEthenaMintingP14Large {
     }
 
     function usde() external view returns (address);
-
-    function hashOrder(Order calldata order)
-        external
-        view
-        returns (bytes32);
+    function hashOrder(Order calldata order) external view returns (bytes32);
 
     function verifyOrder(
         Order calldata order,
         Signature calldata signature
     ) external view returns (bytes32);
 
-    function verifyRoute(Route calldata route)
-        external view returns (bool);
+    function verifyRoute(Route calldata route) external view returns (bool);
 
     function verifyStablesLimit(
         uint128 collateralAmount,
@@ -105,17 +92,15 @@ contract MintingV2P14LargeAmountFullPathTest {
     IEthenaMintingP14Large internal constant target =
         IEthenaMintingP14Large(MINTING);
 
-    IERC20P14Large internal constant usdc =
-        IERC20P14Large(USDC);
+    IERC20P14Large internal constant usdc = IERC20P14Large(USDC);
 
     uint128 internal constant ORDER_USDE = 1_000_000e18;
 
-    // USDC has 6 decimals.
-    // $999,900.01 collateral; $99.99 shortfall on a $1,000,000 order.
+    // $999,900.01 collateral for a $1,000,000 order.
     uint128 internal constant COLLATERAL_SUB_1_BPS =
         999_900_010_000;
 
-    // $999,900.00 collateral; exactly $100 shortfall.
+    // $999,900.00 collateral: exactly 1 basis point short.
     uint128 internal constant COLLATERAL_EXACT_1_BPS =
         999_900_000_000;
 
@@ -134,9 +119,7 @@ contract MintingV2P14LargeAmountFullPathTest {
         require(actual == expected, reason);
     }
 
-    function _sign(
-        IEthenaMintingP14Large.Order memory order
-    )
+    function _sign(IEthenaMintingP14Large.Order memory order)
         internal
         returns (
             IEthenaMintingP14Large.Signature memory sig,
@@ -149,8 +132,7 @@ contract MintingV2P14LargeAmountFullPathTest {
             vm.sign(MINTER_PRIVATE_KEY, digest);
 
         sig = IEthenaMintingP14Large.Signature({
-            signature_type:
-                IEthenaMintingP14Large.SignatureType.EIP712,
+            signature_type: IEthenaMintingP14Large.SignatureType.EIP712,
             signature_bytes: abi.encodePacked(r, s, v)
         });
     }
@@ -195,13 +177,9 @@ contract MintingV2P14LargeAmountFullPathTest {
         });
     }
 
-    function test_large_mint_accepts_sub_one_bps_gap()
-        external
-    {
-        // This balance injection is local-fork-only.
-        // USDC balance mapping slot 9 is inherited from the existing test.
-        bytes32 balanceSlot =
-            keccak256(abi.encode(MINTER, uint256(9)));
+    function test_large_mint_accepts_sub_one_bps_gap() external {
+        // Local-fork-only balance setup; USDC balance mapping slot 9.
+        bytes32 balanceSlot = keccak256(abi.encode(MINTER, uint256(9)));
 
         vm.store(
             USDC,
@@ -219,8 +197,7 @@ contract MintingV2P14LargeAmountFullPathTest {
         bool approved = usdc.approve(MINTING, type(uint256).max);
         _assertTrue(approved, "USDC approval failed");
 
-        address usdeAddress = target.usde();
-        IUSDeP14Large usde = IUSDeP14Large(usdeAddress);
+        IUSDeP14Large usde = IUSDeP14Large(target.usde());
 
         uint256 usdeBefore = usde.balanceOf(MINTER);
         uint256 supplyBefore = usde.totalSupply();
@@ -286,9 +263,7 @@ contract MintingV2P14LargeAmountFullPathTest {
         );
     }
 
-    function test_large_mint_rejects_exact_one_bps_gap()
-        external
-    {
+    function test_large_mint_rejects_exact_one_bps_gap() external {
         IEthenaMintingP14Large.Order memory order = _order(
             "P14-LARGE-EXACT-1-BPS",
             COLLATERAL_EXACT_1_BPS,
@@ -317,36 +292,28 @@ contract MintingV2P14LargeAmountFullPathTest {
 
         vm.prank(MINTER);
 
-        (bool success, bytes memory revertData) =
-            address(target).call(
-                abi.encodeWithSelector(
-                    IEthenaMintingP14Large.mint.selector,
-                    order,
-                    route,
-                    sig
-                )
-            );
-
-        _assertTrue(!success, "exact-1-bps mint unexpectedly succeeded");
-
-        _assertTrue(
-            revertData.length >= 4,
-            "missing revert selector"
+        (bool success, bytes memory revertData) = address(target).call(
+            abi.encodeWithSelector(
+                IEthenaMintingP14Large.mint.selector,
+                order,
+                route,
+                sig
+            )
         );
 
-        bytes4 actualError;
+        _assertTrue(!success, "exact-1-bps mint unexpectedly succeeded");
+        _assertTrue(revertData.length >= 4, "missing revert selector");
 
+        bytes4 actualError;
         assembly {
             actualError := mload(add(revertData, 32))
         }
 
         _assertTrue(
-            actualError ==
-                bytes4(keccak256("InvalidStablePrice()")),
+            actualError == bytes4(keccak256("InvalidStablePrice()")),
             "unexpected revert reason"
         );
     }
-}
 
     function test_unprivileged_caller_cannot_mint_even_with_valid_order_signature()
         external
@@ -368,12 +335,14 @@ contract MintingV2P14LargeAmountFullPathTest {
         ) = _sign(order);
 
         _assertTrue(digest != bytes32(0), "order digest is zero");
+
         _assertTrue(
             target.verifyOrder(order, sig) == digest,
             "signed order should be valid before caller authorization check"
         );
 
         vm.prank(unprivileged);
+
         (bool success, bytes memory revertData) = address(target).call(
             abi.encodeWithSelector(
                 IEthenaMintingP14Large.mint.selector,
@@ -396,7 +365,12 @@ contract MintingV2P14LargeAmountFullPathTest {
 
         _assertTrue(
             actualError ==
-                bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)")),
+                bytes4(
+                    keccak256(
+                        "AccessControlUnauthorizedAccount(address,bytes32)"
+                    )
+                ),
             "mint failed for a reason other than missing caller role"
         );
     }
+}
