@@ -1,11 +1,10 @@
-
- // SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 
-/// @notice Isolated model of Ethena's documented cap predicate.
-/// @dev This does NOT call the deployed EthenaMinting contract.
+/// @notice Isolated model of a cap-boundary predicate.
+/// @dev This is a model test, not a test of the deployed Ethena contract.
 contract MintingV2S06CapBoundaryModelTest is Test {
     function _wouldExceed(
         uint128 currentAmount,
@@ -42,7 +41,10 @@ contract MintingV2S06CapBoundaryModelTest is Test {
     function test_CheckedArithmeticRevertsInsteadOfWrapping()
         external
     {
-        vm.expectRevert();
+        vm.expectRevert(
+            abi.encodeWithSignature("Panic(uint256)", 0x11)
+        );
+
         _wouldExceed(
             type(uint128).max,
             1,
