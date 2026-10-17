@@ -1,0 +1,52 @@
+
+ // SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+
+/// @notice Isolated model of Ethena's documented cap predicate.
+/// @dev This does NOT call the deployed EthenaMinting contract.
+contract MintingV2S06CapBoundaryModelTest is Test {
+    function _wouldExceed(
+        uint128 currentAmount,
+        uint128 requestedAmount,
+        uint128 cap
+    ) internal pure returns (bool) {
+        return currentAmount + requestedAmount > cap;
+    }
+
+    function test_ExactAssetCapIsAllowed() external pure {
+        assertFalse(_wouldExceed(70, 30, 100));
+    }
+
+    function test_OneUnitOverAssetCapIsRejected() external pure {
+        assertTrue(_wouldExceed(70, 31, 100));
+    }
+
+    function test_ExactGlobalCapIsAllowed() external pure {
+        assertFalse(_wouldExceed(999999, 1, 1000000));
+    }
+
+    function test_OneUnitOverGlobalCapIsRejected() external pure {
+        assertTrue(_wouldExceed(999999, 2, 1000000));
+    }
+
+    function test_ZeroCapRejectsPositiveRequest() external pure {
+        assertTrue(_wouldExceed(0, 1, 0));
+    }
+
+    function test_ExactCapWithZeroRequestIsAllowed() external pure {
+        assertFalse(_wouldExceed(100, 0, 100));
+    }
+
+    function test_CheckedArithmeticRevertsInsteadOfWrapping()
+        external
+    {
+        vm.expectRevert();
+        _wouldExceed(
+            type(uint128).max,
+            1,
+            type(uint128).max
+        );
+    }
+}
