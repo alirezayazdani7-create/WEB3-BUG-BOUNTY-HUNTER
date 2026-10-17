@@ -1,0 +1,254 @@
+
+ // SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+
+interface IERC20P14Large {
+    function balanceOf(address account) external view returns (uint256);
+    function allowance(address owner, address spender) external view returns (uint256);
+    function approve(address spender, uint256 amount) external returns (bool);
+    function totalSupply() external view returns (uint256);
+}
+
+interface IUSDeP14Large is IERC20P14Large {}
+
+interface IEthenaMintingP14Large {
+    struct Order {
+        address benefactor;
+        address beneficiary;
+        address collateralAsset;
+        uint256 collateralAmount;
+        uint256 usdeAmount;
+        uint256 nonce;
+        uint256 expiry;
+        uint256 blockNumber;
+    }
+
+    struct Signature {
+        uint8 v;
+        bytes32 r;
+        bytes32 s;
+    }
+
+    function mint(
+        Order calldata order,
+        Signature calldata signature
+    ) external;
+
+    function verifyStablesLimit(
+        address collateralAsset,
+        uint256 collateralAmount,
+        uint256 usdeAmount,
+        bool isMint
+    ) external view;
+
+    function stablesDeltaLimit() external view returns (uint256);
+}
+
+contract MintingV2P14LargeAmountFullPathTest is Test {
+    address internal constant MINTING =
+        0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3;
+
+    address internal constant USDC =
+        0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+
+    address internal constant CUSTODIAN =
+        0x8f0eE0393Eae7fc1638BD7860a3FEc6a663786AE;
+
+    uint256 internal constant TESTER_PK = 1;
+
+    address internal tester;
+
+    uint256 internal constant ORDER_USDE = 1_000_000e18;
+
+    // USDC uses 6 decimals.
+    // $999,900.01 collateral for 1,000,000 USDe.
+    // The $99.99 shortfall is below 1 basis point.
+    uint256 internal constant COLLATERAL_BELOW_1_BPS =
+        999_900_010_000;
+
+    // $999,900.00 collateral for 1,000,000 USDe.
+    // The $100 shortfall is exactly 1 basis point.
+    uint256 internal constant COLLATERAL_EXACT_1_BPS =
+        999_900_000_000;
+
+    uint256 internal constant TEST_USDC_BALANCE =
+        1_000_000_000_000;
+
+    bytes4 internal constant INVALID_STABLE_PRICE =
+        bytes4(keccak256("InvalidStablePrice()"));
+
+    function setUp() public {
+        string memory rpc = vm.envString("MAINNET_RPC_URL");
+        vm.createSelectFork(rpc);
+
+        tester = vm.addr(TESTER_PK);
+
+        // All balance manipulation is restricted to the local fork.
+        // USDC implementation balance mapping slot: 9.
+        // This does not modify Ethereum mainnet state.
+        deal(USDC, tester, TEST_USDC_BALANCE);
+
+        assertGt(
+            IERC20P14Large(USDC).balanceOf(tester),
+            COLLATERAL_BELOW_1_BPS,
+            "tester needs enough USDC on local fork"
+        );
+    }
+
+    function test_large_mint_accepts_sub_one_bps_gap() public {
+        IEthenaMintingP14Large minting =
+            IEthenaMintingP14Large(MINTING);
+
+        IERC20P14Large usdc = IERC20P14Large(USDC);
+        IUSDeP14Large usde = IUSDeP14Large(
+            0x4c9EDD5852cd905f086C759E8383e09bff1E68B3
+        );
+
+        uint256 collateral = COLLATERAL_BELOW_1_BPS;
+
+        // Verify the exact guard behavior first.
+        minting.verifyStablesLimit(
+            USDC,
+            collateral,
+            ORDER_USDE,
+            true
+        );
+
+        uint256 usdeBalanceBefore = usde.balanceOf(tester);
+        uint256 supplyBefore = usde.totalSupply();
+        uint256 custodianBefore = usdc.balanceOf(CUSTODIAN);
+
+        vm.startPrank(tester);
+        usdc.approve(MINTING, collateral);
+
+        IEthenaMintingP14Large.Order memory order =
+            IEthenaMintingP14Large.Order({
+                benefactor: tester,
+                beneficiary: tester,
+                collateralAsset: USDC,
+                collateralAmount: collateral,
+                usdeAmount: ORDER_USDE,
+                nonce: uint256(
+                    keccak256(
+                        abi.encode(
+                            block.chainid,
+                            tester,
+                            collateral,
+                            ORDER_USDE,
+                            block.timestamp
+                        )
+                    )
+                ),
+                expiry: block.timestamp + 1 hours,
+                blockNumber: block.number
+            });
+
+        IEthenaMintingP14Large.Signature memory sig =
+            _signOrder(order);
+
+        minting.mint(order, sig);
+        vm.stopPrank();
+
+        // Confirm the actual mint path, not only the guard.
+        assertEq(
+            usde.balanceOf(tester) - usdeBalanceBefore,
+            ORDER_USDE,
+            "beneficiary did not receive expected USDe"
+        );
+
+        assertEq(
+            usde.totalSupply() - supplyBefore,
+            ORDER_USDE,
+            "total supply delta does not match order"
+        );
+
+        assertEq(
+            usdc.balanceOf(CUSTODIAN) - custodianBefore,
+            collateral,
+            "custodian collateral delta does not match order"
+        );
+    }
+
+    function test_large_mint_rejects_exact_one_bps_gap() public {
+        IEthenaMintingP14Large minting =
+            IEthenaMintingP14Large(MINTING);
+
+        uint256 collateral = COLLATERAL_EXACT_1_BPS;
+
+        // The guard must reject exactly 1 bps when the configured
+        // stable delta limit is zero.
+        assertEq(
+            minting.stablesDeltaLimit(),
+            0,
+            "unexpected stablesDeltaLimit; review test assumptions"
+        );
+
+        IEthenaMintingP14Large.Order memory order =
+            IEthenaMintingP14Large.Order({
+                benefactor: tester,
+                beneficiary: tester,
+                collateralAsset: USDC,
+                collateralAmount: collateral,
+                usdeAmount: ORDER_USDE,
+                nonce: uint256(
+                    keccak256(
+                        abi.encode(
+                            block.chainid,
+                            tester,
+                            collateral,
+                            ORDER_USDE,
+                            block.timestamp
+                        )
+                    )
+                ),
+                expiry: block.timestamp + 1 hours,
+                blockNumber: block.number
+            });
+
+        vm.prank(tester);
+        vm.expectRevert(INVALID_STABLE_PRICE);
+        minting.verifyStablesLimit(
+            USDC,
+            collateral,
+            ORDER_USDE,
+            true
+        );
+    }
+
+    function _signOrder(
+        IEthenaMintingP14Large.Order memory order
+    )
+        internal
+        returns (IEthenaMintingP14Large.Signature memory sig)
+    {
+        // EIP-712 domain and order type must match the deployed
+        // Ethena Minting contract exactly. If the repository's
+        // existing helper has the canonical typed-data implementation,
+        // use that helper instead of this placeholder.
+        bytes32 digest = keccak256(
+            abi.encode(
+                block.chainid,
+                MINTING,
+                order.benefactor,
+                order.beneficiary,
+                order.collateralAsset,
+                order.collateralAmount,
+                order.usdeAmount,
+                order.nonce,
+                order.expiry,
+                order.blockNumber
+            )
+        );
+
+        (uint8 v, bytes32 r, bytes32 s) =
+            vm.sign(TESTER_PK, digest);
+
+        sig = IEthenaMintingP14Large.Signature({
+            v: v,
+            r: r,
+            s: s
+        });
+    }
+}
