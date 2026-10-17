@@ -26,6 +26,9 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
+      - name: Install forge-std dependency
+        run: forge install foundry-rs/forge-std --no-git
+
       - name: Validate safe test configuration
         shell: bash
         run: |
@@ -42,8 +45,8 @@ jobs:
         run: |
           set -euo pipefail
           forge test \
-            --match-path test/EthenaS06LiveCapGateFork.t.sol \
-            --match-test test_S06_AboveCapHitsCapGateBeforeInvalidSignature \
+            --match-path "test/test/EthenaS06LiveCapGateFork.t.sol" \
+            --match-test "test_S06_AboveCapHitsCapGateBeforeInvalidSignature" \
             -vvvv
 
       - name: Assert execution remained local-only
@@ -54,4 +57,4 @@ jobs:
           test "${MAINNET_TRANSACTIONS}" = "NONE"
           test "${LIVE_EXECUTION}" = "PROHIBITED"
           test "${SUBMISSION}" = "NOT_PERFORMED"
-          echo "FINAL_SAFETY_STATUS=PASS"
+          echo "LOCAL_ONLY_ASSERTION=PASS"
