@@ -53,7 +53,7 @@ jobs:
 
           echo "ANVIL_READY=PASS"
 
-      - name: Run read-only rounding probes
+      - name: Run existing rounding probes
         shell: bash
         run: |
           set -euo pipefail
@@ -63,12 +63,36 @@ jobs:
             --match-path test/EthenaP14Rounding234.t.sol \
             -vvvv
 
+      - name: Run large-amount boundary tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -f test/EthenaP14LargeAmountBoundary.t.sol
+
+          echo "LARGE_AMOUNT_TESTS=START"
+
+          forge test \
+            --fork-url http://127.0.0.1:8545 \
+            --match-path test/EthenaP14LargeAmountBoundary.t.sol \
+            -vvvv
+
+          echo "LARGE_AMOUNT_TESTS=PASS"
+
+      - name: Verify safety settings
+        shell: bash
+        run: |
+          set -euo pipefail
+
           test "$EXECUTION_MODE" = "LOCAL_FORK_READ_ONLY"
           test "$MAINNET_TRANSACTIONS" = "NONE"
           test "$LIVE_EXECUTION" = "PROHIBITED"
           test "$SUBMISSION" = "NOT_PERFORMED"
 
           echo "SAFETY_STATUS=PASS"
+          echo "MAINNET_TRANSACTIONS=NONE"
+          echo "LIVE_EXECUTION=PROHIBITED"
+          echo "SUBMISSION=NOT_PERFORMED"
 
       - name: Dump Anvil log on failure
         if: failure()
