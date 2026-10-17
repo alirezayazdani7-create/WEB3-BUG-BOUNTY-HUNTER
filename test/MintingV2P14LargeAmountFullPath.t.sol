@@ -347,3 +347,56 @@ contract MintingV2P14LargeAmountFullPathTest {
         );
     }
 }
+
+    function test_unprivileged_caller_cannot_mint_even_with_valid_order_signature()
+        external
+    {
+        address unprivileged = address(0xBEEF);
+
+        IEthenaMintingP14Large.Order memory order = _order(
+            "P14-UNPRIVILEGED-CALLER",
+            COLLATERAL_SUB_1_BPS,
+            ORDER_USDE,
+            14990003
+        );
+
+        IEthenaMintingP14Large.Route memory route = _route();
+
+        (
+            IEthenaMintingP14Large.Signature memory sig,
+            bytes32 digest
+        ) = _sign(order);
+
+        _assertTrue(digest != bytes32(0), "order digest is zero");
+        _assertTrue(
+            target.verifyOrder(order, sig) == digest,
+            "signed order should be valid before caller authorization check"
+        );
+
+        vm.prank(unprivileged);
+        (bool success, bytes memory revertData) = address(target).call(
+            abi.encodeWithSelector(
+                IEthenaMintingP14Large.mint.selector,
+                order,
+                route,
+                sig
+            )
+        );
+
+        _assertTrue(!success, "unprivileged caller unexpectedly minted");
+        _assertTrue(
+            revertData.length >= 4,
+            "missing authorization revert selector"
+        );
+
+        bytes4 actualError;
+        assembly {
+            actualError := mload(add(revertData, 32))
+        }
+
+        _assertTrue(
+            actualError ==
+                bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)")),
+            "mint failed for a reason other than missing caller role"
+        );
+    }
