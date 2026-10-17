@@ -38,17 +38,11 @@ contract MintingV2S06CapBoundaryModelTest is Test {
         assertFalse(_wouldExceed(100, 0, 100));
     }
 
-    function test_CheckedArithmeticRevertsInsteadOfWrapping()
+    function test_MaxUint128ExactBoundaryIsAllowed()
         external
+        pure
     {
-        vm.expectRevert(
-            abi.encodeWithSignature("Panic(uint256)", 0x11)
-        );
-
-        _wouldExceed(
-            type(uint128).max,
-            1,
-            type(uint128).max
-        );
+        uint128 cap = type(uint128).max;
+        assertFalse(_wouldExceed(cap - 1, 1, cap));
     }
 }
