@@ -16,9 +16,8 @@ jobs:
 s06-usdc-cap:
 runs-on: ubuntu-latest
 timeout-minutes: 15
-
 env:
-  ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
+ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
 
 steps:
   - name: Checkout repository
@@ -55,6 +54,4 @@ steps:
       echo "TEST_MODE=LOCAL_FORK_ONLY"
       echo "LIVE_TRADING=PROHIBITED"
       echo "MAINNET_TRANSACTIONS=NONE"
-      forge test \
-        --match-contract EthenaS06USDCMintCapForkTest \
-        -vvv
+      forge test --match-contract EthenaS06USDCMintCapForkTest -vvv
