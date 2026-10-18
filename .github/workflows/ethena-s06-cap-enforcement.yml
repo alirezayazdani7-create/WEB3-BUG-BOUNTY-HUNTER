@@ -1,0 +1,61 @@
+
+name: Ethena S06 Cap Enforcement
+
+'on':
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'test/EthenaS06USDCMintCapEnforcement.t.sol'
+      - '.github/workflows/ethena-s06-cap-enforcement.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  cap-enforcement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check RPC secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ETHENA_FORK_RPC:-}" || {
+            echo "::error::ETHENA_FORK_RPC secret is missing"
+            exit 1
+          }
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Prepare Foundry
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f foundry.toml ]; then
+            forge init --force .
+          fi
+          mkdir -p lib
+          if [ ! -f lib/forge-std/src/Test.sol ]; then
+            forge install foundry-rs/forge-std --no-commit
+          fi
+
+      - name: Run actual cap enforcement probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "MODE=LOCAL_FORK_ONLY"
+          echo "LIVE_TRADING=PROHIBITED"
+          echo "MAINNET_TRANSACTIONS=NONE"
+          forge test \
+            --match-path test/EthenaS06USDCMintCapEnforcement.t.sol \
+            --match-test test_RejectsMintAboveAssetAndGlobalCap \
+            -vvv
