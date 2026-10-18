@@ -1,120 +1,14 @@
 
- // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.20;
-
-import "forge-std/Test.sol";
-
-interface IS06CumulativeProbe {
-    enum SignatureType { EIP712, EIP1271 }
-    enum OrderType { MINT, REDEEM }
-
-    struct Order {
-        string order_id;
-        OrderType order_type;
-        uint120 expiry;
-        uint128 nonce;
-        address benefactor;
-        address beneficiary;
-        address collateral_asset;
-        uint128 collateral_amount;
-        uint128 usde_amount;
-    }
-
-    struct Route {
-        address[] addresses;
-        uint128[] ratios;
-    }
-
-    struct Signature {
-        SignatureType signature_type;
-        bytes signature_bytes;
-    }
-
-    function tokenConfig(address) external view returns (uint8, bool, uint128, uint128);
-    function globalConfig() external view returns (uint128, uint128);
-    function hashOrder(Order calldata) external view returns (bytes32);
-    function verifyOrder(Order calldata, Signature calldata) external view returns (bytes32);
-    function verifyRoute(Route calldata) external view returns (bool);
-    function verifyStablesLimit(uint128, uint128, address, OrderType) external view returns (bool);
-    function mint(Order calldata, Route calldata, Signature calldata) external;
-    function isWhitelistedBenefactor(address) external view returns (bool);
-    function isApprovedBeneficiary(address, address) external view returns (bool);
-    function hasRole(bytes32, address) external view returns (bool);
-    function totalPerBlock(uint256) external view returns (uint128, uint128);
-    function totalPerBlockPerAsset(uint256, address) external view returns (uint128, uint128);
-}
-
-contract EthenaS06CumulativeCapEnforcementTest is Test {
-    address constant MINTING = 0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3;
-    address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
-    address constant CUSTODIAN = 0x8f0eE0393Eae7fc1638BD7860a3FEc6a663786AE;
-    address constant MINTER = 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf;
-
-    uint256 constant PRIVATE_KEY = 1;
-    uint128 constant REQUEST_USDE = 1e18;
-    uint128 constant COLLATERAL_USDC = 1e6;
-
-    bytes32 constant MINTER_ROLE =
-        0x9f2df0fed2c77648de5860a4cc508cd0818c85b8b8a1ab4ceeef8d981c8956a6;
-
-    IS06CumulativeProbe target = IS06CumulativeProbe(MINTING);
-
-    function setUp() public {
-        vm.createSelectFork(vm.envString("ETHENA_FORK_RPC"));
-    }
-
-    function _seedAuthorization() internal {
-        bytes32 member = bytes32(uint256(uint160(MINTER)));
-
-        // Local-fork-only whitelist setup; verified storage layout.
-        vm.store(MINTING, bytes32(uint256(4)), bytes32(uint256(1)));
-        vm.store(MINTING, keccak256(abi.encode(uint256(4))), member);
-        vm.store(MINTING, keccak256(abi.encode(member, uint256(5))), bytes32(uint256(1)));
-
-        // Local-fork-only beneficiary approval setup.
-        uint256 setBase = uint256(keccak256(abi.encode(MINTER, uint256(6))));
-        vm.store(MINTING, bytes32(setBase), bytes32(uint256(1)));
-        vm.store(MINTING, keccak256(abi.encode(setBase)), member);
-        vm.store(MINTING, keccak256(abi.encode(member, setBase + 1)), bytes32(uint256(1)));
-
-        // Local-fork-only MINTER_ROLE setup; _roles is at slot 0.
-        bytes32 roleDataSlot = keccak256(abi.encode(MINTER_ROLE, uint256(0)));
-        vm.store(
-            MINTING,
-            keccak256(abi.encode(MINTER, roleDataSlot)),
-            bytes32(uint256(1))
-        );
-
-        assertTrue(target.isWhitelistedBenefactor(MINTER), "whitelist setup failed");
-        assertTrue(target.isApprovedBeneficiary(MINTER, MINTER), "approval setup failed");
-        assertTrue(target.hasRole(MINTER_ROLE, MINTER), "role setup failed");
-    }
-
-    function _seedGlobalCounter(uint128 value) internal {
-        // Verified storage layout: totalPerBlock mapping at slot 13.
-        bytes32 slot = keccak256(abi.encode(block.number, uint256(13)));
-        vm.store(MINTING, slot, bytes32(uint256(value)));
-
-        (uint128 observed,) = target.totalPerBlock(block.number);
-        assertEq(observed, value, "global counter seed mismatch");
-    }
-
-    function _seedAssetCounter(uint128 value) internal {
-        // Verified storage layout: totalPerBlockPerAsset mapping at slot 14.
-        bytes32 outer = keccak256(abi.encode(block.number, uint256(14)));
-        bytes32 slot = keccak256(abi.encode(USDC, outer));
-        vm.store(MINTING, slot, bytes32(uint256(value)));
-
-        (uint128 observed,) = target.totalPerBlockPerAsset(block.number, USDC);
-        assertEq(observed, value, "asset counter seed mismatch");
-    }
-
-    function _buildOrder() internal view returns (IS06CumulativeProbe.Order memory) {
+    function _buildOrderWithNonce(uint128 nonce, string memory orderId)
+        internal
+        view
+        returns (IS06CumulativeProbe.Order memory)
+    {
         return IS06CumulativeProbe.Order({
-            order_id: "S06-CUMULATIVE-CAP-LOCAL",
+            order_id: orderId,
             order_type: IS06CumulativeProbe.OrderType.MINT,
             expiry: uint120(block.timestamp + 1 days),
-            nonce: 906101,
+            nonce: nonce,
             benefactor: MINTER,
             beneficiary: MINTER,
             collateral_asset: USDC,
@@ -123,57 +17,17 @@ contract EthenaS06CumulativeCapEnforcementTest is Test {
         });
     }
 
-    function _buildRoute() internal pure returns (IS06CumulativeProbe.Route memory route) {
-        address[] memory addresses = new address[](1);
-        uint128[] memory ratios = new uint128[](1);
-        addresses[0] = CUSTODIAN;
-        ratios[0] = 10_000;
-
-        route = IS06CumulativeProbe.Route({
-            addresses: addresses,
-            ratios: ratios
-        });
-    }
-
-    function _signOrder(IS06CumulativeProbe.Order memory order)
+    function _submitMint(uint128 nonce, string memory orderId)
         internal
-        returns (IS06CumulativeProbe.Signature memory sig)
+        returns (bool success, bytes memory data)
     {
-        bytes32 digest = target.hashOrder(order);
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(PRIVATE_KEY, digest);
-
-        sig = IS06CumulativeProbe.Signature({
-            signature_type: IS06CumulativeProbe.SignatureType.EIP712,
-            signature_bytes: abi.encodePacked(r, s, v)
-        });
-
-        assertEq(
-            uint256(target.verifyOrder(order, sig)),
-            uint256(digest),
-            "signature verification failed"
-        );
-    }
-
-    function _assertRejectedByCap() internal {
-        IS06CumulativeProbe.Order memory order = _buildOrder();
+        IS06CumulativeProbe.Order memory order =
+            _buildOrderWithNonce(nonce, orderId);
         IS06CumulativeProbe.Route memory route = _buildRoute();
-
-        assertTrue(target.verifyRoute(route), "route rejected before cap check");
-        assertTrue(
-            target.verifyStablesLimit(
-                order.collateral_amount,
-                order.usde_amount,
-                USDC,
-                order.order_type
-            ),
-            "stable-price guard rejected probe"
-        );
-
         IS06CumulativeProbe.Signature memory sig = _signOrder(order);
 
-        // Call only on the local fork. No mainnet transaction is sent.
         vm.prank(MINTER);
-        (bool success, bytes memory data) = MINTING.call(
+        (success, data) = MINTING.call(
             abi.encodeWithSelector(
                 IS06CumulativeProbe.mint.selector,
                 order,
@@ -181,46 +35,131 @@ contract EthenaS06CumulativeCapEnforcementTest is Test {
                 sig
             )
         );
-
-        assertFalse(success, "mint accepted cumulative amount above cap");
-        assertGe(data.length, 4, "missing revert selector");
-
-        bytes4 actual;
-        assembly {
-            actual := mload(add(data, 32))
-        }
-
-        bytes4 assetError = bytes4(keccak256("MaxMintPerBlockExceeded()"));
-        bytes4 globalError = bytes4(keccak256("GlobalMaxMintPerBlockExceeded()"));
-
-        assertTrue(
-            actual == assetError || actual == globalError,
-            "revert was not a cap error"
-        );
-
-        emit log_named_bytes32("Confirmed cumulative cap error", bytes32(actual));
     }
 
-    function test_RejectsCumulativeMintAboveAssetCap() external {
+    function test_RealMintIncrementsCumulativeCountersAndNextBlockStartsFresh()
+        external
+    {
         _seedAuthorization();
 
         (, bool active, uint128 assetCap,) = target.tokenConfig(USDC);
-        assertTrue(active, "USDC inactive");
-        assertGt(assetCap, REQUEST_USDE, "asset cap too small for probe");
-
-        // Existing same-block amount + request = asset cap + 1.
-        _seedAssetCounter(assetCap - REQUEST_USDE + 1);
-        _assertRejectedByCap();
-    }
-
-    function test_RejectsCumulativeMintAboveGlobalCap() external {
-        _seedAuthorization();
-
         (uint128 globalCap,) = target.globalConfig();
-        assertGt(globalCap, REQUEST_USDE, "global cap too small for probe");
 
-        // Existing same-block amount + request = global cap + 1.
-        _seedGlobalCounter(globalCap - REQUEST_USDE + 1);
-        _assertRejectedByCap();
+        assertTrue(active, "USDC inactive");
+        assertGt(
+            assetCap,
+            REQUEST_USDE * 2,
+            "asset cap too small for two mints"
+        );
+        assertGt(
+            globalCap,
+            REQUEST_USDE * 2,
+            "global cap too small for two mints"
+        );
+
+        uint128 assetSeed = assetCap - REQUEST_USDE * 2;
+        uint128 globalSeed = globalCap - REQUEST_USDE * 2;
+
+        _seedAssetCounter(assetSeed);
+        _seedGlobalCounter(globalSeed);
+
+        // Fund and approve USDC only on the local fork.
+        deal(USDC, MINTER, uint256(COLLATERAL_USDC) * 3);
+
+        vm.prank(MINTER);
+        require(
+            IERC20S06Probe(USDC).approve(
+                MINTING,
+                type(uint256).max
+            ),
+            "USDC approval failed"
+        );
+
+        (bool ok1, bytes memory err1) =
+            _submitMint(906201, "S06-REAL-MINT-1");
+
+        assertTrue(
+            ok1,
+            string.concat("first local mint failed: ", vm.toString(err1))
+        );
+
+        (uint128 globalAfter1,) = target.totalPerBlock(block.number);
+        (uint128 assetAfter1,) =
+            target.totalPerBlockPerAsset(block.number, USDC);
+
+        assertEq(
+            globalAfter1,
+            globalSeed + REQUEST_USDE,
+            "global counter did not increment after mint 1"
+        );
+        assertEq(
+            assetAfter1,
+            assetSeed + REQUEST_USDE,
+            "asset counter did not increment after mint 1"
+        );
+
+        (bool ok2, bytes memory err2) =
+            _submitMint(906202, "S06-REAL-MINT-2");
+
+        assertTrue(
+            ok2,
+            string.concat("second local mint failed: ", vm.toString(err2))
+        );
+
+        (uint128 globalAfter2,) = target.totalPerBlock(block.number);
+        (uint128 assetAfter2,) =
+            target.totalPerBlockPerAsset(block.number, USDC);
+
+        assertEq(
+            globalAfter2,
+            globalCap,
+            "global counter did not reach cap"
+        );
+        assertEq(
+            assetAfter2,
+            assetCap,
+            "asset counter did not reach cap"
+        );
+
+        (bool ok3, bytes memory err3) =
+            _submitMint(906203, "S06-REAL-MINT-3");
+
+        assertFalse(
+            ok3,
+            "third mint accepted after cap was reached"
+        );
+        assertGe(err3.length, 4, "third mint has no revert selector");
+
+        bytes4 actual;
+        assembly {
+            actual := mload(add(err3, 32))
+        }
+
+        bytes4 assetError =
+            bytes4(keccak256("MaxMintPerBlockExceeded()"));
+        bytes4 globalError =
+            bytes4(keccak256("GlobalMaxMintPerBlockExceeded()"));
+
+        assertTrue(
+            actual == assetError || actual == globalError,
+            "third mint did not fail with a cap error"
+        );
+
+        uint256 nextBlock = block.number + 1;
+        vm.roll(nextBlock);
+
+        (uint128 globalNext,) = target.totalPerBlock(nextBlock);
+        (uint128 assetNext,) =
+            target.totalPerBlockPerAsset(nextBlock, USDC);
+
+        assertEq(
+            globalNext,
+            0,
+            "global counter not fresh in next block"
+        );
+        assertEq(
+            assetNext,
+            0,
+            "asset counter not fresh in next block"
+        );
     }
-}
