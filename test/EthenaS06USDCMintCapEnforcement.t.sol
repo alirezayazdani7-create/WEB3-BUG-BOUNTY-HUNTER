@@ -5,8 +5,15 @@ pragma solidity ^0.8.20;
 import "forge-std/Test.sol";
 
 interface IEthenaS06MintCapProbe {
-    enum SignatureType { EIP712, EIP1271 }
-    enum OrderType { MINT, REDEEM }
+    enum SignatureType {
+        EIP712,
+        EIP1271
+    }
+
+    enum OrderType {
+        MINT,
+        REDEEM
+    }
 
     struct Order {
         string order_id;
@@ -31,13 +38,19 @@ interface IEthenaS06MintCapProbe {
     }
 
     function tokenConfig(address asset)
-        external view returns (uint8, bool, uint128, uint128);
+        external
+        view
+        returns (uint8, bool, uint128, uint128);
 
     function globalConfig()
-        external view returns (uint128, uint128);
+        external
+        view
+        returns (uint128, uint128);
 
     function hashOrder(Order calldata order)
-        external view returns (bytes32);
+        external
+        view
+        returns (bytes32);
 
     function verifyOrder(
         Order calldata order,
@@ -45,7 +58,9 @@ interface IEthenaS06MintCapProbe {
     ) external view returns (bytes32);
 
     function verifyRoute(Route calldata route)
-        external view returns (bool);
+        external
+        view
+        returns (bool);
 
     function verifyStablesLimit(
         uint128 collateralAmount,
@@ -61,12 +76,19 @@ interface IEthenaS06MintCapProbe {
     ) external;
 
     function isWhitelistedBenefactor(address benefactor)
-        external view returns (bool);
+        external
+        view
+        returns (bool);
 
     function isApprovedBeneficiary(
         address benefactor,
         address beneficiary
     ) external view returns (bool);
+
+    function hasRole(bytes32 role, address account)
+        external
+        view
+        returns (bool);
 }
 
 contract EthenaS06USDCMintCapEnforcementTest is Test {
@@ -84,6 +106,9 @@ contract EthenaS06USDCMintCapEnforcementTest is Test {
     address constant MINTER =
         0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf;
 
+    bytes32 constant MINTER_ROLE =
+        0x9f2df0fed2c77648de5860a4cc508cd0818c85b8b8a1ab4ceeef8d981c8956a6;
+
     IEthenaS06MintCapProbe target =
         IEthenaS06MintCapProbe(MINTING);
 
@@ -91,13 +116,10 @@ contract EthenaS06USDCMintCapEnforcementTest is Test {
         vm.createSelectFork(vm.envString("ETHENA_FORK_RPC"));
     }
 
-    // Local-fork storage setup only.
-    // Do not interpret this as proof of the deployed storage layout.
     function _seedLocalWhitelistAndApproval() internal {
         bytes32 member = bytes32(uint256(uint160(MINTER)));
 
-        // Assumed EnumerableSet storage slots; assertions below
-        // must validate these assumptions before the mint probe.
+        // Local-fork-only whitelist setup.
         bytes32 whitelistData =
             keccak256(abi.encode(uint256(4)));
 
@@ -109,9 +131,20 @@ contract EthenaS06USDCMintCapEnforcementTest is Test {
             bytes32(uint256(4)),
             bytes32(uint256(1))
         );
-        vm.store(MINTING, whitelistData, member);
-        vm.store(MINTING, whitelistIndex, bytes32(uint256(1)));
 
+        vm.store(
+            MINTING,
+            whitelistData,
+            member
+        );
+
+        vm.store(
+            MINTING,
+            whitelistIndex,
+            bytes32(uint256(1))
+        );
+
+        // Local-fork-only beneficiary approval setup.
         uint256 setBase =
             uint256(keccak256(abi.encode(MINTER, uint256(6))));
 
@@ -126,9 +159,34 @@ contract EthenaS06USDCMintCapEnforcementTest is Test {
             bytes32(setBase),
             bytes32(uint256(1))
         );
-        vm.store(MINTING, approvedData, member);
-        vm.store(MINTING, approvedIndex, bytes32(uint256(1)));
 
+        vm.store(
+            MINTING,
+            approvedData,
+            member
+        );
+
+        vm.store(
+            MINTING,
+            approvedIndex,
+            bytes32(uint256(1))
+        );
+
+        // Local-fork-only AccessControl role setup.
+        // This storage calculation assumes _roles is at slot 0.
+        bytes32 roleDataSlot =
+            keccak256(abi.encode(MINTER_ROLE, uint256(0)));
+
+        bytes32 minterRoleSlot =
+            keccak256(abi.encode(MINTER, roleDataSlot));
+
+        vm.store(
+            MINTING,
+            minterRoleSlot,
+            bytes32(uint256(1))
+        );
+
+        // Verify all local setup assumptions through public views.
         assertTrue(
             target.isWhitelistedBenefactor(MINTER),
             "Local setup: benefactor not whitelisted"
@@ -138,10 +196,19 @@ contract EthenaS06USDCMintCapEnforcementTest is Test {
             target.isApprovedBeneficiary(MINTER, MINTER),
             "Local setup: beneficiary not approved"
         );
+
+        assertTrue(
+            target.hasRole(MINTER_ROLE, MINTER),
+            "Local setup: MINTER_ROLE missing"
+        );
     }
 
-    function _buildOrder(uint128 amount, uint128 usdeAmount)
-        internal view
+    function _buildOrder(
+        uint128 amount,
+        uint128 usdeAmount
+    )
+        internal
+        view
         returns (IEthenaS06MintCapProbe.Order memory order)
     {
         order = IEthenaS06MintCapProbe.Order({
@@ -158,7 +225,8 @@ contract EthenaS06USDCMintCapEnforcementTest is Test {
     }
 
     function _buildRoute()
-        internal pure
+        internal
+        pure
         returns (IEthenaS06MintCapProbe.Route memory route)
     {
         address[] memory addresses = new address[](1);
@@ -173,7 +241,9 @@ contract EthenaS06USDCMintCapEnforcementTest is Test {
         });
     }
 
-    function _sign(IEthenaS06MintCapProbe.Order memory order)
+    function _sign(
+        IEthenaS06MintCapProbe.Order memory order
+    )
         internal
         returns (
             IEthenaS06MintCapProbe.Signature memory sig,
@@ -204,13 +274,17 @@ contract EthenaS06USDCMintCapEnforcementTest is Test {
         assertGt(assetMintCap, 0, "Asset cap is zero");
         assertGt(globalMintCap, 0, "Global cap is zero");
 
-        uint256 effectiveCap = assetMintCap < globalMintCap
-            ? assetMintCap
-            : globalMintCap;
+        uint256 effectiveCap =
+            assetMintCap < globalMintCap
+                ? assetMintCap
+                : globalMintCap;
 
         uint256 amount = effectiveCap + 1;
 
-        require(amount <= type(uint128).max, "Cap too large");
+        require(
+            amount <= type(uint128).max,
+            "Cap too large"
+        );
 
         // USDC has 6 decimals; USDe has 18 decimals.
         uint256 usdeAmount = amount * 1e12;
@@ -221,11 +295,18 @@ contract EthenaS06USDCMintCapEnforcementTest is Test {
         );
 
         IEthenaS06MintCapProbe.Order memory order =
-            _buildOrder(uint128(amount), uint128(usdeAmount));
+            _buildOrder(
+                uint128(amount),
+                uint128(usdeAmount)
+            );
 
-        IEthenaS06MintCapProbe.Route memory route = _buildRoute();
+        IEthenaS06MintCapProbe.Route memory route =
+            _buildRoute();
 
-        assertTrue(target.verifyRoute(route), "Route rejected");
+        assertTrue(
+            target.verifyRoute(route),
+            "Route rejected"
+        );
 
         assertTrue(
             target.verifyStablesLimit(
@@ -248,24 +329,43 @@ contract EthenaS06USDCMintCapEnforcementTest is Test {
             "Order signature verification mismatch"
         );
 
-        emit log_named_uint("Asset mint cap", assetMintCap);
-        emit log_named_uint("Global mint cap", globalMintCap);
-        emit log_named_uint("Probe collateral amount", amount);
-
-        // This call is executed on the local fork simulation only.
-        vm.prank(MINTER);
-
-        (bool success, bytes memory revertData) = MINTING.call(
-            abi.encodeWithSelector(
-                IEthenaS06MintCapProbe.mint.selector,
-                order,
-                route,
-                sig
-            )
+        emit log_named_uint(
+            "Asset mint cap",
+            assetMintCap
         );
 
-        emit log_named_uint("Mint call succeeded", success ? 1 : 0);
-        emit log_named_bytes("Mint revert data", revertData);
+        emit log_named_uint(
+            "Global mint cap",
+            globalMintCap
+        );
+
+        emit log_named_uint(
+            "Probe collateral amount",
+            amount
+        );
+
+        // Simulated call on the local fork only.
+        vm.prank(MINTER);
+
+        (bool success, bytes memory revertData) =
+            MINTING.call(
+                abi.encodeWithSelector(
+                    IEthenaS06MintCapProbe.mint.selector,
+                    order,
+                    route,
+                    sig
+                )
+            );
+
+        emit log_named_uint(
+            "Mint call succeeded",
+            success ? 1 : 0
+        );
+
+        emit log_named_bytes(
+            "Mint revert data",
+            revertData
+        );
 
         assertFalse(
             success,
@@ -285,10 +385,14 @@ contract EthenaS06USDCMintCapEnforcementTest is Test {
         }
 
         bytes4 assetCapError =
-            bytes4(keccak256("MaxMintPerBlockExceeded()"));
+            bytes4(
+                keccak256("MaxMintPerBlockExceeded()")
+            );
 
         bytes4 globalCapError =
-            bytes4(keccak256("GlobalMaxMintPerBlockExceeded()"));
+            bytes4(
+                keccak256("GlobalMaxMintPerBlockExceeded()")
+            );
 
         assertTrue(
             actualError == assetCapError ||
