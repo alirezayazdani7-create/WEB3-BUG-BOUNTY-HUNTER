@@ -1,57 +1,57 @@
 name: Ethena S06 USDC Cap Fork Test
 
-on:
-workflow_dispatch:
-push:
-branches:
-- main
-paths:
-- "test/EthenaS06USDCMintCapFork.t.sol"
-- ".github/workflows/ethena-s06-usdc-cap-fork.yml"
+'on':
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'test/EthenaS06USDCMintCapFork.t.sol'
+      - '.github/workflows/ethena-s06-usdc-cap-fork.yml'
 
 permissions:
-contents: read
+  contents: read
 
 jobs:
-s06-usdc-cap:
-runs-on: ubuntu-latest
-timeout-minutes: 15
-env:
-ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
+  s06-usdc-cap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
 
-steps:
-  - name: Checkout repository
-    uses: actions/checkout@v4
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-  - name: Check RPC secret
-    shell: bash
-    run: |
-      set -euo pipefail
-      if [ -z "${ETHENA_FORK_RPC:-}" ]; then
-        echo "::error::ETHENA_FORK_RPC secret is missing."
-        exit 1
-      fi
-      echo "RPC secret is configured."
+      - name: Check RPC secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${ETHENA_FORK_RPC:-}" ]; then
+            echo "::error::ETHENA_FORK_RPC secret is missing."
+            exit 1
+          fi
+          echo "RPC secret is configured."
 
-  - name: Install Foundry
-    uses: foundry-rs/foundry-toolchain@v1
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
 
-  - name: Prepare isolated Foundry project
-    shell: bash
-    run: |
-      set -euo pipefail
-      mkdir -p /tmp/s06-usdc/test
-      cd /tmp/s06-usdc
-      forge init --force .
-      cp "$GITHUB_WORKSPACE/test/EthenaS06USDCMintCapFork.t.sol" test/
-      forge install foundry-rs/forge-std --no-commit
+      - name: Prepare isolated Foundry project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/s06-usdc/test
+          cd /tmp/s06-usdc
+          forge init --force .
+          cp "$GITHUB_WORKSPACE/test/EthenaS06USDCMintCapFork.t.sol" test/
+          forge install foundry-rs/forge-std --no-commit
 
-  - name: Run S06 USDC cap tests
-    working-directory: /tmp/s06-usdc
-    shell: bash
-    run: |
-      set -euo pipefail
-      echo "TEST_MODE=LOCAL_FORK_ONLY"
-      echo "LIVE_TRADING=PROHIBITED"
-      echo "MAINNET_TRANSACTIONS=NONE"
-      forge test --match-contract EthenaS06USDCMintCapForkTest -vvv
+      - name: Run S06 USDC cap tests
+        working-directory: /tmp/s06-usdc
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "TEST_MODE=LOCAL_FORK_ONLY"
+          echo "LIVE_TRADING=PROHIBITED"
+          echo "MAINNET_TRANSACTIONS=NONE"
+          forge test --match-contract EthenaS06USDCMintCapForkTest -vvv
