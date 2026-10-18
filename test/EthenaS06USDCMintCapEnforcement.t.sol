@@ -30,12 +30,10 @@ interface IEthenaS06MintCapProbe {
     }
 
     function tokenConfig(address asset)
-        external view
-        returns (uint8, bool, uint128, uint128);
+        external view returns (uint8, bool, uint128, uint128);
 
     function globalConfig()
-        external view
-        returns (uint128, uint128);
+        external view returns (uint128, uint128);
 
     function hashOrder(Order calldata order)
         external view returns (bytes32);
@@ -60,6 +58,12 @@ interface IEthenaS06MintCapProbe {
         Route calldata route,
         Signature calldata signature
     ) external;
+
+    function isWhitelistedBenefactor(address benefactor)
+        external view returns (bool);
+
+    function isApprovedBeneficiary(address benefactor, address beneficiary)
+        external view returns (bool);
 }
 
 contract EthenaS06USDCMintCapEnforcementTest is Test {
@@ -84,12 +88,110 @@ contract EthenaS06USDCMintCapEnforcementTest is Test {
         vm.createSelectFork(vm.envString("ETHENA_FORK_RPC"));
     }
 
+    function _seedLocalWhitelistAndApproval() internal {
+        // Verified storage layout:
+        // slot 4 = whitelisted benefactors set
+        // slot 6 = approved beneficiaries mapping
+
+        bytes32 member = bytes32(uint256(uint160(MINTER)));
+
+        // Whitelisted benefactor set.
+        bytes32 whitelistIndex =
+            keccak256(abi.encode(member, uint256(4)));
+        bytes32 whitelistData =
+            keccak256(abi.encode(uint256(5)));
+
+        vm.store(MINTING, whitelistIndex, bytes32(uint256(1)));
+        vm.store(MINTING, bytes32(uint256(5)), bytes32(uint256(1)));
+        vm.store(MINTING, whitelistData, member);
+
+        // Approved beneficiary set belonging to MINTER.
+        uint256 setBase =
+            uint256(keccak256(abi.encode(MINTER, uint256(6))));
+
+        bytes32 approvedIndex =
+            keccak256(abi.encode(member, bytes32(setBase)));
+
+        uint256 arrayLengthSlot = setBase + 1;
+        bytes32 arrayData =
+            keccak256(abi.encode(arrayLengthSlot));
+
+        vm.store(MINTING, approvedIndex, bytes32(uint256(1)));
+        vm.store(
+            MINTING,
+            bytes32(arrayLengthSlot),
+            bytes32(uint256(1))
+        );
+        vm.store(MINTING, arrayData, member);
+
+        assertTrue(
+            target.isWhitelistedBenefactor(MINTER),
+            "Local setup: benefactor not whitelisted"
+        );
+
+        assertTrue(
+            target.isApprovedBeneficiary(MINTER, MINTER),
+            "Local setup: beneficiary not approved"
+        );
+    }
+
+    function _buildOrder(uint128 amount, uint128 usdeAmount)
+        internal view
+        returns (IEthenaS06MintCapProbe.Order memory order)
+    {
+        order = IEthenaS06MintCapProbe.Order({
+            order_id: "S06-CAP-ENFORCEMENT-LOCAL",
+            order_type: IEthenaS06MintCapProbe.OrderType.MINT,
+            expiry: uint120(block.timestamp + 1 days),
+            nonce: 906001,
+            benefactor: MINTER,
+            beneficiary: MINTER,
+            collateral_asset: USDC,
+            collateral_amount: amount,
+            usde_amount: usdeAmount
+        });
+    }
+
+    function _buildRoute()
+        internal pure
+        returns (IEthenaS06MintCapProbe.Route memory route)
+    {
+        address[] memory addresses = new address[](1);
+        uint128[] memory ratios = new uint128[](1);
+
+        addresses[0] = CUSTODIAN;
+        ratios[0] = 10_000;
+
+        route = IEthenaS06MintCapProbe.Route({
+            addresses: addresses,
+            ratios: ratios
+        });
+    }
+
+    function _sign(IEthenaS06MintCapProbe.Order memory order)
+        internal
+        returns (
+            IEthenaS06MintCapProbe.Signature memory sig,
+            bytes32 digest
+        )
+    {
+        digest = target.hashOrder(order);
+
+        (uint8 v, bytes32 r, bytes32 s) =
+            vm.sign(TEST_PRIVATE_KEY, digest);
+
+        sig = IEthenaS06MintCapProbe.Signature({
+            signature_type:
+                IEthenaS06MintCapProbe.SignatureType.EIP712,
+            signature_bytes: abi.encodePacked(r, s, v)
+        });
+    }
+
     function test_RejectsMintAboveAssetAndGlobalCap() public {
-        (
-            uint8 tokenType,
-            bool active,
-            uint128 assetMintCap,
-        ) = target.tokenConfig(USDC);
+        _seedLocalWhitelistAndApproval();
+
+        (, bool active, uint128 assetMintCap,) =
+            target.tokenConfig(USDC);
 
         (uint128 globalMintCap,) = target.globalConfig();
 
@@ -97,42 +199,26 @@ contract EthenaS06USDCMintCapEnforcementTest is Test {
         assertGt(assetMintCap, 0, "Asset cap is zero");
         assertGt(globalMintCap, 0, "Global cap is zero");
 
-        uint256 effectiveCap =
-            assetMintCap < globalMintCap
-                ? assetMintCap
-                : globalMintCap;
+        uint256 effectiveCap = assetMintCap < globalMintCap
+            ? assetMintCap
+            : globalMintCap;
 
         uint256 amount = effectiveCap + 1;
 
         require(amount <= type(uint128).max, "Cap too large");
 
-        // USDC's six decimals versus USDe's 18 decimals.
+        // USDC has 6 decimals; USDe has 18 decimals.
         uint256 usdeAmount = amount * 1e12;
-        require(usdeAmount <= type(uint128).max, "USDe amount too large");
+
+        require(
+            usdeAmount <= type(uint128).max,
+            "USDe amount too large"
+        );
 
         IEthenaS06MintCapProbe.Order memory order =
-            IEthenaS06MintCapProbe.Order({
-                order_id: "S06-CAP-ENFORCEMENT",
-                order_type: IEthenaS06MintCapProbe.OrderType.MINT,
-                expiry: uint120(block.timestamp + 1 days),
-                nonce: 906001,
-                benefactor: MINTER,
-                beneficiary: MINTER,
-                collateral_asset: USDC,
-                collateral_amount: uint128(amount),
-                usde_amount: uint128(usdeAmount)
-            });
+            _buildOrder(uint128(amount), uint128(usdeAmount));
 
-        address[] memory addresses = new address[](1);
-        uint128[] memory ratios = new uint128[](1);
-        addresses[0] = CUSTODIAN;
-        ratios[0] = 10_000;
-
-        IEthenaS06MintCapProbe.Route memory route =
-            IEthenaS06MintCapProbe.Route({
-                addresses: addresses,
-                ratios: ratios
-            });
+        IEthenaS06MintCapProbe.Route memory route = _buildRoute();
 
         assertTrue(target.verifyRoute(route), "Route rejected");
 
@@ -143,20 +229,13 @@ contract EthenaS06USDCMintCapEnforcementTest is Test {
                 USDC,
                 order.order_type
             ),
-            "Stable-price guard rejected probe before cap test"
+            "Stable-price guard rejected probe"
         );
 
-        bytes32 digest = target.hashOrder(order);
-
-        (uint8 v, bytes32 r, bytes32 s) =
-            vm.sign(TEST_PRIVATE_KEY, digest);
-
-        IEthenaS06MintCapProbe.Signature memory sig =
-            IEthenaS06MintCapProbe.Signature({
-                signature_type:
-                    IEthenaS06MintCapProbe.SignatureType.EIP712,
-                signature_bytes: abi.encodePacked(r, s, v)
-            });
+        (
+            IEthenaS06MintCapProbe.Signature memory sig,
+            bytes32 digest
+        ) = _sign(order);
 
         assertEq(
             uint256(target.verifyOrder(order, sig)),
@@ -164,29 +243,57 @@ contract EthenaS06USDCMintCapEnforcementTest is Test {
             "Order signature verification mismatch"
         );
 
-        emit log_named_uint("USDC token type", tokenType);
         emit log_named_uint("Asset mint cap", assetMintCap);
         emit log_named_uint("Global mint cap", globalMintCap);
         emit log_named_uint("Probe collateral amount", amount);
 
-        // Local fork only. No Mainnet transaction is sent.
+        // Simulated call against the local fork only.
         vm.prank(MINTER);
-        (bool success, bytes memory revertData) =
-            MINTING.call(
-                abi.encodeWithSelector(
-                    IEthenaS06MintCapProbe.mint.selector,
-                    order,
-                    route,
-                    sig
-                )
-            );
+
+        (bool success, bytes memory revertData) = MINTING.call(
+            abi.encodeWithSelector(
+                IEthenaS06MintCapProbe.mint.selector,
+                order,
+                route,
+                sig
+            )
+        );
 
         emit log_named_uint("Mint call succeeded", success ? 1 : 0);
-        emit log_named_uint("Revert data length", revertData.length);
+        emit log_named_bytes("Mint revert data", revertData);
 
         assertFalse(
             success,
             "Mint accepted an order above the effective cap"
+        );
+
+        assertGe(
+            revertData.length,
+            4,
+            "Missing revert selector"
+        );
+
+        bytes4 actualError;
+
+        assembly {
+            actualError := mload(add(revertData, 32))
+        }
+
+        bytes4 assetCapError =
+            bytes4(keccak256("MaxMintPerBlockExceeded()"));
+
+        bytes4 globalCapError =
+            bytes4(keccak256("GlobalMaxMintPerBlockExceeded()"));
+
+        assertTrue(
+            actualError == assetCapError ||
+            actualError == globalCapError,
+            "Mint reverted for a reason other than a mint cap"
+        );
+
+        emit log_named_bytes32(
+            "Confirmed cap error selector",
+            bytes32(actualError)
         );
     }
 }
