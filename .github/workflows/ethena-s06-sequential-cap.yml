@@ -8,6 +8,7 @@ on:
     paths:
       - 'test/EthenaS06SequentialMintCap.t.sol'
       - '.github/workflows/ethena-s06-sequential-cap.yml'
+      - 'foundry.toml'
 
 permissions:
   contents: read
@@ -37,22 +38,28 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
+      - name: Verify Foundry configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f foundry.toml ]; then
+            echo "::error::foundry.toml is missing from repository root"
+            exit 1
+          fi
+          echo "Foundry configuration found."
+          cat foundry.toml
+          forge --version
+
       - name: Prepare Foundry dependencies
         shell: bash
         run: |
           set -euo pipefail
-
-          if [ ! -f foundry.toml ]; then
-            echo "::error::foundry.toml is missing"
-            exit 1
-          fi
-
           if [ ! -f lib/forge-std/src/Test.sol ]; then
             mkdir -p lib
             forge install foundry-rs/forge-std --no-commit
           fi
-
-          forge --version
+          test -f lib/forge-std/src/Test.sol
+          echo "Foundry dependencies are ready."
 
       - name: Verify sequential cap test exists
         shell: bash
@@ -71,7 +78,6 @@ jobs:
           echo "MODE=LOCAL_FORK_ONLY"
           echo "LIVE_TRADING=PROHIBITED"
           echo "MAINNET_TRANSACTIONS=NONE"
-
           forge test \
             --match-path test/EthenaS06SequentialMintCap.t.sol \
             --match-test test_SequentialMintCountersAndOverCapRejection \
