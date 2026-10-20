@@ -1,6 +1,6 @@
 name: Ethena S06 Sequential Mint Cap Test
 
-on:
+'on':
 workflow_dispatch:
 push:
 branches:
@@ -20,6 +20,7 @@ cancel-in-progress: false
 
 jobs:
 sequential-cap-test:
+name: Sequential mint cap test (local fork only)
 runs-on: ubuntu-latest
 timeout-minutes: 20
 
