@@ -17,17 +17,14 @@ jobs:
     timeout-minutes: 20
 
     env:
-      FOUNDRY_PROFILE: default
       MODE: LOCAL_FORK_ONLY
       LIVE_TRADING: PROHIBITED
       MAINNET_TRANSACTIONS: NONE
+      FOUNDRY_PROFILE: default
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 1
 
       - name: Verify safety mode
         shell: bash
@@ -36,57 +33,56 @@ jobs:
           test "$MODE" = "LOCAL_FORK_ONLY"
           test "$LIVE_TRADING" = "PROHIBITED"
           test "$MAINNET_TRANSACTIONS" = "NONE"
-          echo "Safety checks passed."
+          echo "Safety mode verified."
+          echo "No live transactions will be submitted."
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: stable
 
       - name: Verify required files
         shell: bash
         run: |
           set -euo pipefail
-          test -f foundry.toml
+
           test -f test/EthenaS06SequentialMintCap.t.sol
+          echo "Required test file exists."
+
+          if [ -f foundry.toml ]; then
+            echo "Foundry config exists."
+          else
+            echo "No foundry.toml; Foundry defaults will be used."
+          fi
 
       - name: Prepare forge-std
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -f lib/forge-std/src/Test.sol ]; then
-            mkdir -p lib
-            git clone --depth 1 https://github.com/foundry-rs/forge-std.git lib/forge-std
+
+          if [ -d lib/forge-std ]; then
+            echo "forge-std directory already exists."
+          elif [ -f .gitmodules ] && grep -q "forge-std" .gitmodules; then
+            git submodule update --init --depth 1 lib/forge-std
+          else
+            forge install foundry-rs/forge-std --no-git
           fi
+
           test -f lib/forge-std/src/Test.sol
-          test -f lib/forge-std/src/StdStorage.sol
+          echo "forge-std is available."
 
       - name: Diagnose StdStorage assembly blocks
         shell: bash
+        continue-on-error: true
         run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
+          set -u
 
-          path = Path("lib/forge-std/src/StdStorage.sol")
-          source = path.read_text()
-          lines = source.splitlines()
+          FILE="lib/forge-std/src/StdStorage.sol"
 
-          matches = list(re.finditer(
-              r'assembly(?:\s*\(\s*"memory-safe"\s*\))?\s*\{',
-              source
-          ))
-
-          print(f"File: {path}")
-          print(f"Assembly blocks: {len(matches)}")
-
-          for match in matches:
-              line_no = source.count("\n", 0, match.start()) + 1
-              print(f"\n--- Assembly block at line {line_no} ---")
-              for i in range(max(0, line_no - 3), min(len(lines), line_no + 12)):
-                  print(f"{i + 1}: {lines[i]}")
-          PY
+          if [ -f "$FILE" ]; then
+            echo "Inspecting assembly blocks in $FILE"
+            grep -n -B 3 -A 8 "assembly" "$FILE" || true
+          else
+            echo "StdStorage.sol not found; skipping diagnostic."
+          fi
 
       - name: Run sequential cap test
         shell: bash
@@ -94,11 +90,16 @@ jobs:
           ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
         run: |
           set -euo pipefail
+
           if [ -z "${ETHENA_FORK_RPC:-}" ]; then
-            echo "::error::ETHENA_FORK_RPC secret is missing."
+            echo "::error::ETHENA_FORK_RPC repository secret is missing."
             exit 1
           fi
-          forge test --match-path test/EthenaS06SequentialMintCap.t.sol --match-test test_SequentialMintCountersAndOverCapRejection -vvv
+
+          forge test \
+            --match-path test/EthenaS06SequentialMintCap.t.sol \
+            --match-test test_SequentialMintCountersAndOverCapRejection \
+            -vvv
 
       - name: Safety summary
         if: always()
@@ -107,4 +108,5 @@ jobs:
           echo "MODE=LOCAL_FORK_ONLY"
           echo "LIVE_TRADING=PROHIBITED"
           echo "MAINNET_TRANSACTIONS=NONE"
-          echo "No live transaction was submitted by this workflow."
+          echo "This workflow is for local fork testing only."
+          echo "No live transaction submission is authorized."
