@@ -1,25 +1,22 @@
 name: Ethena S06 Sequential Mint Cap Test
-
 'on':
-workflow_dispatch:
-push:
-branches:
-- test/cumulative-cap-real-mint-flow
-paths:
-- 'test/EthenaS06SequentialMintCap.t.sol'
-- 'test/EthenaS06CumulativeCapEnforcement.t.sol'
-- '.github/workflows/ethena-s06-sequential-cap.yml'
-- 'foundry.toml'
+  workflow_dispatch:
+  push:
+    branches:
+      - test/cumulative-cap-real-mint-flow
+    paths:
+      - 'foundry.toml'
 
 permissions:
-contents: read
+  contents: read
 
 concurrency:
-group: ethena-s06-sequential-cap
-cancel-in-progress: false
+  group: ethena-s06-sequential-cap
+  cancel-in-progress: false
 
 jobs:
-sequential-cap-test:
+  sequential-cap-test:
+    runs-on: ubuntu-latest:
 name: Sequential mint cap test (local fork only)
 runs-on: ubuntu-latest
 timeout-minutes: 20
