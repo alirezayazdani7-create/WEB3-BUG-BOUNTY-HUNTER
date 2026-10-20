@@ -1,123 +1,123 @@
 name: Ethena S06 Sequential Mint Cap Test
 
 on:
-workflow_dispatch:
-push:
-branches:
-- test/cumulative-cap-real-mint-flow
-paths:
-- 'test/EthenaS06SequentialMintCap.t.sol'
-- 'test/EthenaS06CumulativeCapEnforcement.t.sol'
-- '.github/workflows/ethena-s06-sequential-cap.yml'
-- 'foundry.toml'
+  workflow_dispatch:
+  push:
+    branches:
+      - test/cumulative-cap-real-mint-flow
+    paths:
+      - 'test/EthenaS06SequentialMintCap.t.sol'
+      - 'test/EthenaS06CumulativeCapEnforcement.t.sol'
+      - '.github/workflows/ethena-s06-sequential-cap.yml'
+      - 'foundry.toml'
 
 permissions:
-contents: read
+  contents: read
 
 concurrency:
-group: ethena-s06-sequential-cap
-cancel-in-progress: false
+  group: ethena-s06-sequential-cap
+  cancel-in-progress: false
 
 jobs:
-sequential-cap-test:
-runs-on: ubuntu-latest
-timeout-minutes: 20
+  sequential-cap-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
 
-env:
-  ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
+    env:
+      ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
 
-steps:
-  - name: Checkout repository
-    uses: actions/checkout@v4
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-  - name: Verify RPC secret
-    shell: bash
-    run: |
-      set -euo pipefail
-      if [ -z "${ETHENA_FORK_RPC:-}" ]; then
-        echo "::error::ETHENA_FORK_RPC secret is missing"
-        exit 1
-      fi
-      echo "RPC secret is configured."
+      - name: Verify RPC secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${ETHENA_FORK_RPC:-}" ]; then
+            echo "::error::ETHENA_FORK_RPC secret is missing"
+            exit 1
+          fi
+          echo "RPC secret is configured."
 
-  - name: Install Foundry
-    uses: foundry-rs/foundry-toolchain@v1
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
 
-  - name: Verify Foundry configuration
-    shell: bash
-    run: |
-      set -euo pipefail
-      test -f foundry.toml
-      cat foundry.toml
-      forge --version
+      - name: Verify Foundry configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f foundry.toml
+          cat foundry.toml
+          forge --version
 
-  - name: Prepare Foundry dependencies
-    shell: bash
-    run: |
-      set -euo pipefail
-      if [ ! -f lib/forge-std/src/Test.sol ]; then
-        mkdir -p lib
-        forge install foundry-rs/forge-std --no-commit
-      fi
-      test -f lib/forge-std/src/Test.sol
-      echo "Foundry dependencies are ready."
+      - name: Prepare Foundry dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f lib/forge-std/src/Test.sol ]; then
+            mkdir -p lib
+            forge install foundry-rs/forge-std --no-commit
+          fi
+          test -f lib/forge-std/src/Test.sol
+          echo "Foundry dependencies are ready."
 
-  - name: Patch StdStorage memory-safe assembly
-    shell: bash
-    run: |
-      set -euo pipefail
-      python3 - <<'PY'
-      from pathlib import Path
+      - name: Patch StdStorage memory-safe assembly
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
 
-      p = Path("lib/forge-std/src/StdStorage.sol")
-      if not p.exists():
-          raise SystemExit("forge-std StdStorage.sol not found")
+          p = Path("lib/forge-std/src/StdStorage.sol")
+          if not p.exists():
+              raise SystemExit("forge-std StdStorage.sol not found")
 
-      s = p.read_text()
-      old = """        assembly {
-        mask := shl(offsetRight, sub(shl(sub(256, add(offsetRight, offsetLeft)), 1), 1))
-    }"""
-      new = """        assembly ("memory-safe") {
-        mask := shl(offsetRight, sub(shl(sub(256, add(offsetRight, offsetLeft)), 1), 1))
-    }"""
+          s = p.read_text()
+          old = """        assembly {
+              mask := shl(offsetRight, sub(shl(sub(256, add(offsetRight, offsetLeft)), 1), 1))
+          }"""
+          new = """        assembly ("memory-safe") {
+              mask := shl(offsetRight, sub(shl(sub(256, add(offsetRight, offsetLeft)), 1), 1))
+          }"""
 
-      if 'assembly ("memory-safe")' in s:
-          print("Memory-safe annotation already present; no change needed.")
-      elif s.count(old) == 1:
-          p.write_text(s.replace(old, new, 1))
-          print("Patched getMaskByOffsets assembly.")
-      else:
-          raise SystemExit(
-              "Expected assembly block did not match; refusing unsafe replacement."
-          )
-      PY
+          if 'assembly ("memory-safe")' in s:
+              print("Memory-safe annotation already present; no change needed.")
+          elif s.count(old) == 1:
+              p.write_text(s.replace(old, new, 1))
+              print("Patched getMaskByOffsets assembly.")
+          else:
+              raise SystemExit(
+                  "Expected assembly block did not match; refusing unsafe replacement."
+              )
+          PY
 
-  - name: Verify sequential cap test exists
-    shell: bash
-    run: |
-      set -euo pipefail
-      test -f test/EthenaS06SequentialMintCap.t.sol
-      grep -q \
-        'test_SequentialMintCountersAndOverCapRejection' \
-        test/EthenaS06SequentialMintCap.t.sol
-      echo "Sequential cap test found."
+      - name: Verify sequential cap test exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f test/EthenaS06SequentialMintCap.t.sol
+          grep -q \
+            'test_SequentialMintCountersAndOverCapRejection' \
+            test/EthenaS06SequentialMintCap.t.sol
+          echo "Sequential cap test found."
 
-  - name: Run sequential cap test on local fork
-    shell: bash
-    run: |
-      set -euo pipefail
-      echo "MODE=LOCAL_FORK_ONLY"
-      echo "LIVE_TRADING=PROHIBITED"
-      echo "MAINNET_TRANSACTIONS=NONE"
-      forge test \
-        --match-path test/EthenaS06SequentialMintCap.t.sol \
-        --match-test test_SequentialMintCountersAndOverCapRejection \
-        -vvv
+      - name: Run sequential cap test on local fork
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "MODE=LOCAL_FORK_ONLY"
+          echo "LIVE_TRADING=PROHIBITED"
+          echo "MAINNET_TRANSACTIONS=NONE"
+          forge test \
+            --match-path test/EthenaS06SequentialMintCap.t.sol \
+            --match-test test_SequentialMintCountersAndOverCapRejection \
+            -vvv
 
-  - name: Report execution restrictions
-    if: always()
-    shell: bash
-    run: |
-      echo "Execution mode: local fork simulation only"
-      echo "Live trading: prohibited"
-      echo "Mainnet transactions: none"
+      - name: Report execution restrictions
+        if: always()
+        shell: bash
+        run: |
+          echo "Execution mode: local fork simulation only"
+          echo "Live trading: prohibited"
+          echo "Mainnet transactions: none"
