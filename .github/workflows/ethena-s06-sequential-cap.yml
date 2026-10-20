@@ -19,12 +19,12 @@ concurrency:
 
 jobs:
   sequential-cap-test:
-    name: Sequential mint cap test (local fork only)
+    name: Sequential mint cap test
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
     env:
-      ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
+      ETHENA_FORK_RPC: "${{ secrets.ETHENA_FORK_RPC }}"
 
     steps:
       - name: Checkout repository
@@ -43,65 +43,26 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
-      - name: Verify Foundry configuration
+      - name: Verify required files
         shell: bash
         run: |
           set -euo pipefail
           test -f foundry.toml
+          test -f test/EthenaS06SequentialMintCap.t.sol
+          grep -q 'test_SequentialMintCountersAndOverCapRejection' test/EthenaS06SequentialMintCap.t.sol
           forge --version
+          echo "Required files verified."
 
       - name: Prepare Foundry dependencies
         shell: bash
         run: |
           set -euo pipefail
           if [ ! -f lib/forge-std/src/Test.sol ]; then
-            mkdir -p lib
             forge install foundry-rs/forge-std --no-commit
           fi
           test -f lib/forge-std/src/Test.sol
-          echo "Foundry dependencies are ready."
 
-      - name: Patch StdStorage memory-safe assembly
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("lib/forge-std/src/StdStorage.sol")
-          if not p.exists():
-              raise SystemExit("forge-std StdStorage.sol not found")
-
-          s = p.read_text()
-
-          old = """        assembly {
-          mask := shl(offsetRight, sub(shl(sub(256, add(offsetRight, offsetLeft)), 1), 1))
-      }"""
-
-          new = """        assembly ("memory-safe") {
-          mask := shl(offsetRight, sub(shl(sub(256, add(offsetRight, offsetLeft)), 1), 1))
-      }"""
-
-          if s.count(new) == 1:
-              print("Target assembly is already memory-safe.")
-          elif s.count(old) == 1:
-              p.write_text(s.replace(old, new, 1))
-              print("Patched target assembly.")
-          else:
-              raise SystemExit(
-                  "Expected assembly block not found exactly once; refusing replacement."
-              )
-          PY
-
-      - name: Verify sequential cap test exists
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f test/EthenaS06SequentialMintCap.t.sol
-          grep -q 'test_SequentialMintCountersAndOverCapRejection' test/EthenaS06SequentialMintCap.t.sol
-          echo "Sequential cap test found."
-
-      - name: Run sequential cap test on local fork
+      - name: Run sequential cap test
         shell: bash
         run: |
           set -euo pipefail
