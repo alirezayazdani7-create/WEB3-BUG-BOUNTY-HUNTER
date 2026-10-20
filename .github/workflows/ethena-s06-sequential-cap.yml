@@ -1,130 +1,134 @@
-name: Ethena S06 Sequential Mint Cap Test
+name: Ethena S06 Sequential Mint Cap
 
-'on':
-  workflow_dispatch:
-  push:
-    branches:
-      - test/cumulative-cap-real-mint-flow
-    paths:
-      - 'foundry.toml'
-      - 'test/EthenaS06SequentialMintCap.t.sol'
-      - '.github/workflows/ethena-s06-sequential-cap.yml'
+on:
+workflow_dispatch:
 
 permissions:
-  contents: read
+contents: read
 
 concurrency:
-  group: ethena-s06-sequential-cap
-  cancel-in-progress: false
+group: ethena-s06-sequential-cap-${{ github.ref }}
+cancel-in-progress: false
 
 jobs:
-  sequential-cap-test:
-    name: Sequential mint cap test
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+sequential-cap-test:
+name: Local Fork Sequential Mint Cap Test
+runs-on: ubuntu-latest
+timeout-minutes: 20
 
+env:
+  FOUNDRY_PROFILE: default
+  LIVE_TRADING: "PROHIBITED"
+  MAINNET_TRANSACTIONS: "NONE"
+  MODE: "LOCAL_FORK_ONLY"
+
+steps:
+  - name: Checkout repository
+    uses: actions/checkout@v4
+    with:
+      submodules: recursive
+      fetch-depth: 1
+
+  - name: Verify safety mode
+    shell: bash
+    run: |
+      set -euo pipefail
+      echo "MODE=${MODE}"
+      echo "LIVE_TRADING=${LIVE_TRADING}"
+      echo "MAINNET_TRANSACTIONS=${MAINNET_TRANSACTIONS}"
+      test "${MODE}" = "LOCAL_FORK_ONLY"
+      test "${LIVE_TRADING}" = "PROHIBITED"
+      test "${MAINNET_TRANSACTIONS}" = "NONE"
+
+  - name: Install Foundry
+    uses: foundry-rs/foundry-toolchain@v1
+    with:
+      version: stable
+
+  - name: Verify project files
+    shell: bash
+    run: |
+      set -euo pipefail
+      test -f foundry.toml
+      test -f test/EthenaS06SequentialMintCap.t.sol
+      forge --version
+      git submodule status || true
+
+  - name: Prepare forge-std dependency
+    shell: bash
+    run: |
+      set -euo pipefail
+      if [ ! -f lib/forge-std/src/Test.sol ]; then
+        mkdir -p lib
+        git clone --depth 1 https://github.com/foundry-rs/forge-std.git lib/forge-std
+      fi
+      test -f lib/forge-std/src/Test.sol
+      test -f lib/forge-std/src/StdStorage.sol
+
+  - name: Diagnose StdStorage assembly blocks
+    shell: bash
+    run: |
+      set -euo pipefail
+      python3 - <<'PY'
+      from pathlib import Path
+      import re
+
+      path = Path("lib/forge-std/src/StdStorage.sol")
+      source = path.read_text()
+
+      blocks = list(re.finditer(
+          r'assembly(?:\s*\(\s*"memory-safe"\s*\))?\s*\{',
+          source
+      ))
+
+      safe = [
+          match for match in blocks
+          if re.match(
+              r'assembly\s*\(\s*"memory-safe"\s*\)\s*\{',
+              match.group(0)
+          )
+      ]
+
+      unsafe = [
+          match for match in blocks
+          if re.match(r'assembly\s*\{', match.group(0))
+      ]
+
+      print(f"File: {path}")
+      print(f"Assembly blocks: {len(blocks)}")
+      print(f"Memory-safe blocks: {len(safe)}")
+      print(f"Unannotated blocks: {len(unsafe)}")
+
+      lines = source.splitlines()
+      for match in blocks:
+          line_no = source.count("\n", 0, match.start()) + 1
+          print(f"\n--- Assembly at line {line_no} ---")
+          start = max(0, line_no - 3)
+          end = min(len(lines), line_no + 14)
+          for index in range(start, end):
+              print(f"{index + 1}: {lines[index]}")
+      PY
+
+  - name: Run targeted sequential cap test
+    shell: bash
     env:
-      ETHENA_FORK_RPC: "${{ secrets.ETHENA_FORK_RPC }}"
+      ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
+    run: |
+      set -euo pipefail
+      if [ -z "${ETHENA_FORK_RPC:-}" ]; then
+        echo "::error::ETHENA_FORK_RPC repository secret is missing."
+        exit 1
+      fi
+      forge test \
+        --match-path test/EthenaS06SequentialMintCap.t.sol \
+        --match-test test_SequentialMintCountersAndOverCapRejection \
+        -vvv
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Verify RPC secret
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -z "${ETHENA_FORK_RPC:-}" ]; then
-            echo "::error::ETHENA_FORK_RPC secret is missing"
-            exit 1
-          fi
-          echo "RPC secret is configured."
-
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Verify required files
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f foundry.toml
-          test -f test/EthenaS06SequentialMintCap.t.sol
-          grep -q 'test_SequentialMintCountersAndOverCapRejection' test/EthenaS06SequentialMintCap.t.sol
-          forge --version
-
-      - name: Prepare Foundry dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ ! -f lib/forge-std/src/Test.sol ]; then
-            forge install foundry-rs/forge-std --no-commit
-          fi
-          test -f lib/forge-std/src/StdStorage.sol
-          test -f lib/forge-std/src/Test.sol
-
-      - name: Patch targeted memory-safe assembly
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          path = Path("lib/forge-std/src/StdStorage.sol")
-          source = path.read_text()
-
-          target = r"mask\s*:=\s*shl\s*\(\s*offsetRight"
-
-          safe_pattern = re.compile(
-              r'assembly\s*\(\s*"memory-safe"\s*\)\s*\{'
-              r'(?=[^}]*' + target + r')'
-          )
-
-          unsafe_pattern = re.compile(
-              r'assembly\s*\{'
-              r'(?=[^}]*' + target + r')'
-          )
-
-          safe_matches = list(safe_pattern.finditer(source))
-          unsafe_matches = list(unsafe_pattern.finditer(source))
-
-          if len(safe_matches) == 1 and len(unsafe_matches) == 0:
-              print("Target assembly is already memory-safe.")
-          elif len(unsafe_matches) == 1 and len(safe_matches) == 0:
-              source = unsafe_pattern.sub(
-                  'assembly ("memory-safe") {',
-                  source,
-                  count=1
-              )
-              path.write_text(source)
-              print("Target assembly patched successfully.")
-          else:
-              raise SystemExit(
-                  "Expected exactly one target assembly block; "
-                  "refusing an ambiguous or unsafe patch."
-              )
-
-          check = path.read_text()
-          if not safe_pattern.search(check):
-              raise SystemExit("Memory-safe patch verification failed.")
-          PY
-
-      - name: Run sequential cap test
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "MODE=LOCAL_FORK_ONLY"
-          echo "LIVE_TRADING=PROHIBITED"
-          echo "MAINNET_TRANSACTIONS=NONE"
-          forge test \
-            --match-path test/EthenaS06SequentialMintCap.t.sol \
-            --match-test test_SequentialMintCountersAndOverCapRejection \
-            -vvv
-
-      - name: Report execution restrictions
-        if: always()
-        shell: bash
-        run: |
-          echo "Execution mode: local fork simulation only"
-          echo "Live trading: prohibited"
-          echo "Mainnet transactions: none"
+  - name: Final safety summary
+    if: always()
+    shell: bash
+    run: |
+      echo "MODE=LOCAL_FORK_ONLY"
+      echo "LIVE_TRADING=PROHIBITED"
+      echo "MAINNET_TRANSACTIONS=NONE"
+      echo "This workflow does not submit live transactions."
