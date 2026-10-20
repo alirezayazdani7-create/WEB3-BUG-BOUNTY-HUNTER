@@ -48,7 +48,6 @@ steps:
     run: |
       set -euo pipefail
       test -f foundry.toml
-      cat foundry.toml
       forge --version
 
   - name: Prepare Foundry dependencies
@@ -84,13 +83,13 @@ steps:
       }"""
 
       if s.count(new) == 1:
-          print("Target getMaskByOffsets assembly is already memory-safe.")
+          print("Target assembly is already memory-safe.")
       elif s.count(old) == 1:
           p.write_text(s.replace(old, new, 1))
-          print("Patched getMaskByOffsets assembly.")
+          print("Patched target assembly.")
       else:
           raise SystemExit(
-              "Expected getMaskByOffsets assembly was not found exactly once; refusing unsafe replacement."
+              "Expected assembly block not found exactly once; refusing replacement."
           )
       PY
 
@@ -99,9 +98,7 @@ steps:
     run: |
       set -euo pipefail
       test -f test/EthenaS06SequentialMintCap.t.sol
-      grep -q \
-        'test_SequentialMintCountersAndOverCapRejection' \
-        test/EthenaS06SequentialMintCap.t.sol
+      grep -q 'test_SequentialMintCountersAndOverCapRejection' test/EthenaS06SequentialMintCap.t.sol
       echo "Sequential cap test found."
 
   - name: Run sequential cap test on local fork
