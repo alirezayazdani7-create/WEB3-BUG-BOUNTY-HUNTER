@@ -34,17 +34,17 @@ jobs:
           test "$MODE" = "LOCAL_FORK_ONLY"
           test "$LIVE_TRADING" = "PROHIBITED"
           test "$MAINNET_TRANSACTIONS" = "NONE"
-          echo "Safety mode verified. No live transactions."
+          echo "Safety mode verified."
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
-      - name: Verify required files
+      - name: Verify required test
         shell: bash
         run: |
           set -euo pipefail
           test -f test/EthenaS06SequentialMintCap.t.sol
-          echo "S06 test file exists."
+          echo "S06 test exists."
 
       - name: Prepare forge-std
         shell: bash
@@ -52,7 +52,7 @@ jobs:
           set -euo pipefail
 
           if [ -f lib/forge-std/src/Test.sol ]; then
-            echo "Using repository forge-std."
+            echo "Using existing forge-std."
           elif [ -f .gitmodules ] && grep -q "forge-std" .gitmodules; then
             git submodule update --init --depth 1 lib/forge-std
           else
@@ -60,8 +60,43 @@ jobs:
           fi
 
           test -f lib/forge-std/src/Test.sol
+          test -f lib/forge-std/src/StdStorage.sol
 
-      - name: Create isolated S06 test project
+      - name: Apply targeted Yul compatibility fix
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("lib/forge-std/src/StdStorage.sol")
+          source = path.read_text()
+
+          old = """assembly {
+                      mask := shl(offsetRight, sub(shl(sub(256, add(offsetRight, offsetLeft)), 1), 1))
+                  }"""
+
+          new = """assembly ("memory-safe") {
+                      mask := shl(offsetRight, sub(shl(sub(256, add(offsetRight, offsetLeft)), 1), 1))
+                  }"""
+
+          if new in source:
+              print("StdStorage compatibility fix already present.")
+          elif old in source:
+              path.write_text(source.replace(old, new, 1))
+              print("Patched the specific StdStorage assembly block.")
+          else:
+              raise SystemExit(
+                  "Expected StdStorage assembly block not found; "
+                  "stopping rather than applying an unverified patch."
+              )
+          PY
+
+          grep -F 'assembly ("memory-safe")' \
+            lib/forge-std/src/StdStorage.sol
+
+      - name: Create isolated S06 project
         shell: bash
         run: |
           set -euo pipefail
@@ -75,6 +110,10 @@ jobs:
           ln -s "$GITHUB_WORKSPACE/lib/forge-std" \
             "$ISOLATED/lib/forge-std"
 
+          # The test's assembly only reads the bytes buffer's first word.
+          sed -i 's/assembly {/assembly ("memory-safe") {/g' \
+            "$ISOLATED/test/EthenaS06SequentialMintCap.t.sol"
+
           cat > "$ISOLATED/foundry.toml" <<'EOF'
           [profile.default]
           src = "src"
@@ -86,9 +125,9 @@ jobs:
           via_ir = true
           EOF
 
-          echo "Isolated S06 project prepared."
+          echo "Isolated test project prepared."
 
-      - name: Run isolated sequential cap test
+      - name: Run sequential mint cap test
         shell: bash
         env:
           ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
@@ -115,4 +154,4 @@ jobs:
           echo "MODE=LOCAL_FORK_ONLY"
           echo "LIVE_TRADING=PROHIBITED"
           echo "MAINNET_TRANSACTIONS=NONE"
-          echo "No live transactions were submitted."
+          echo "No live transactions submitted."
