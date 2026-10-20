@@ -44,15 +44,15 @@ jobs:
         run: |
           set -euo pipefail
           test -f test/EthenaS06SequentialMintCap.t.sol
-          echo "Test file exists."
+          echo "S06 test file exists."
 
       - name: Prepare forge-std
         shell: bash
         run: |
           set -euo pipefail
 
-          if [ -d lib/forge-std ]; then
-            echo "forge-std directory exists."
+          if [ -f lib/forge-std/src/Test.sol ]; then
+            echo "Using repository forge-std."
           elif [ -f .gitmodules ] && grep -q "forge-std" .gitmodules; then
             git submodule update --init --depth 1 lib/forge-std
           else
@@ -61,7 +61,34 @@ jobs:
 
           test -f lib/forge-std/src/Test.sol
 
-      - name: Run sequential cap test
+      - name: Create isolated S06 test project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ISOLATED="$RUNNER_TEMP/s06-isolated"
+          mkdir -p "$ISOLATED/test" "$ISOLATED/lib"
+
+          cp test/EthenaS06SequentialMintCap.t.sol \
+            "$ISOLATED/test/EthenaS06SequentialMintCap.t.sol"
+
+          ln -s "$GITHUB_WORKSPACE/lib/forge-std" \
+            "$ISOLATED/lib/forge-std"
+
+          cat > "$ISOLATED/foundry.toml" <<'EOF'
+          [profile.default]
+          src = "src"
+          test = "test"
+          libs = ["lib"]
+          solc_version = "0.8.20"
+          optimizer = true
+          optimizer_runs = 200
+          via_ir = true
+          EOF
+
+          echo "Isolated S06 project prepared."
+
+      - name: Run isolated sequential cap test
         shell: bash
         env:
           ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
@@ -73,10 +100,10 @@ jobs:
             exit 1
           fi
 
+          cd "$RUNNER_TEMP/s06-isolated"
+
           forge test \
             --use 0.8.20 \
-            --via-ir \
-            --optimize \
             --match-path test/EthenaS06SequentialMintCap.t.sol \
             --match-test test_SequentialMintCountersAndOverCapRejection \
             -vvv
@@ -88,4 +115,4 @@ jobs:
           echo "MODE=LOCAL_FORK_ONLY"
           echo "LIVE_TRADING=PROHIBITED"
           echo "MAINNET_TRANSACTIONS=NONE"
-          echo "Local fork testing only; no live transactions."
+          echo "No live transactions were submitted."
