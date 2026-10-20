@@ -1,3 +1,4 @@
+
 name: Ethena S06 Sequential Mint Cap
 
 on:
@@ -33,8 +34,7 @@ jobs:
           test "$MODE" = "LOCAL_FORK_ONLY"
           test "$LIVE_TRADING" = "PROHIBITED"
           test "$MAINNET_TRANSACTIONS" = "NONE"
-          echo "Safety mode verified."
-          echo "No live transactions will be submitted."
+          echo "Safety mode verified. No live transactions."
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
@@ -43,15 +43,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           test -f test/EthenaS06SequentialMintCap.t.sol
-          echo "Required test file exists."
-
-          if [ -f foundry.toml ]; then
-            echo "Foundry config exists."
-          else
-            echo "No foundry.toml; Foundry defaults will be used."
-          fi
+          echo "Test file exists."
 
       - name: Prepare forge-std
         shell: bash
@@ -59,7 +52,7 @@ jobs:
           set -euo pipefail
 
           if [ -d lib/forge-std ]; then
-            echo "forge-std directory already exists."
+            echo "forge-std directory exists."
           elif [ -f .gitmodules ] && grep -q "forge-std" .gitmodules; then
             git submodule update --init --depth 1 lib/forge-std
           else
@@ -67,22 +60,6 @@ jobs:
           fi
 
           test -f lib/forge-std/src/Test.sol
-          echo "forge-std is available."
-
-      - name: Diagnose StdStorage assembly blocks
-        shell: bash
-        continue-on-error: true
-        run: |
-          set -u
-
-          FILE="lib/forge-std/src/StdStorage.sol"
-
-          if [ -f "$FILE" ]; then
-            echo "Inspecting assembly blocks in $FILE"
-            grep -n -B 3 -A 8 "assembly" "$FILE" || true
-          else
-            echo "StdStorage.sol not found; skipping diagnostic."
-          fi
 
       - name: Run sequential cap test
         shell: bash
@@ -92,11 +69,14 @@ jobs:
           set -euo pipefail
 
           if [ -z "${ETHENA_FORK_RPC:-}" ]; then
-            echo "::error::ETHENA_FORK_RPC repository secret is missing."
+            echo "::error::ETHENA_FORK_RPC secret is missing."
             exit 1
           fi
 
           forge test \
+            --use 0.8.20 \
+            --via-ir \
+            --optimize \
             --match-path test/EthenaS06SequentialMintCap.t.sol \
             --match-test test_SequentialMintCountersAndOverCapRejection \
             -vvv
@@ -108,5 +88,4 @@ jobs:
           echo "MODE=LOCAL_FORK_ONLY"
           echo "LIVE_TRADING=PROHIBITED"
           echo "MAINNET_TRANSACTIONS=NONE"
-          echo "This workflow is for local fork testing only."
-          echo "No live transaction submission is authorized."
+          echo "Local fork testing only; no live transactions."
