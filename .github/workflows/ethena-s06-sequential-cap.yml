@@ -51,7 +51,6 @@ jobs:
           test -f test/EthenaS06SequentialMintCap.t.sol
           grep -q 'test_SequentialMintCountersAndOverCapRejection' test/EthenaS06SequentialMintCap.t.sol
           forge --version
-          echo "Required files verified."
 
       - name: Prepare Foundry dependencies
         shell: bash
@@ -60,7 +59,55 @@ jobs:
           if [ ! -f lib/forge-std/src/Test.sol ]; then
             forge install foundry-rs/forge-std --no-commit
           fi
+          test -f lib/forge-std/src/StdStorage.sol
           test -f lib/forge-std/src/Test.sol
+
+      - name: Patch targeted memory-safe assembly
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("lib/forge-std/src/StdStorage.sol")
+          source = path.read_text()
+
+          target = r"mask\s*:=\s*shl\s*\(\s*offsetRight"
+
+          safe_pattern = re.compile(
+              r'assembly\s*\(\s*"memory-safe"\s*\)\s*\{'
+              r'(?=[^}]*' + target + r')'
+          )
+
+          unsafe_pattern = re.compile(
+              r'assembly\s*\{'
+              r'(?=[^}]*' + target + r')'
+          )
+
+          safe_matches = list(safe_pattern.finditer(source))
+          unsafe_matches = list(unsafe_pattern.finditer(source))
+
+          if len(safe_matches) == 1 and len(unsafe_matches) == 0:
+              print("Target assembly is already memory-safe.")
+          elif len(unsafe_matches) == 1 and len(safe_matches) == 0:
+              source = unsafe_pattern.sub(
+                  'assembly ("memory-safe") {',
+                  source,
+                  count=1
+              )
+              path.write_text(source)
+              print("Target assembly patched successfully.")
+          else:
+              raise SystemExit(
+                  "Expected exactly one target assembly block; "
+                  "refusing an ambiguous or unsafe patch."
+              )
+
+          check = path.read_text()
+          if not safe_pattern.search(check):
+              raise SystemExit("Memory-safe patch verification failed.")
+          PY
 
       - name: Run sequential cap test
         shell: bash
