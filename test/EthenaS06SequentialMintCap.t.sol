@@ -1,4 +1,5 @@
-// SPDX-License-Identifier: UNLICENSED
+
+ // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
@@ -31,33 +32,26 @@ interface IS06SequentialMint {
 
     function tokenConfig(address)
         external view returns (uint8, bool, uint128, uint128);
-
-    function globalConfig()
-        external view returns (uint128, uint128);
-
-    function totalPerBlock(uint256)
-        external view returns (uint128, uint128);
-
+    function globalConfig() external view returns (uint128, uint128);
+    function totalPerBlock(uint256) external view returns (uint128, uint128);
     function totalPerBlockPerAsset(uint256, address)
         external view returns (uint128, uint128);
-
     function hashOrder(Order calldata) external view returns (bytes32);
-
     function verifyOrder(Order calldata, Signature calldata)
         external view returns (bytes32);
-
     function verifyRoute(Route calldata) external view returns (bool);
-
-    function verifyStablesLimit(
-        uint128, uint128, address, OrderType
-    ) external view returns (bool);
-
-    function mint(Order calldata, Route calldata, Signature calldata)
-        external;
-
+    function verifyStablesLimit(uint128, uint128, address, OrderType)
+        external view returns (bool);
+    function mint(Order calldata, Route calldata, Signature calldata) external;
     function isWhitelistedBenefactor(address) external view returns (bool);
     function isApprovedBeneficiary(address, address) external view returns (bool);
     function hasRole(bytes32, address) external view returns (bool);
+}
+
+interface IERC20MintTest {
+    function approve(address spender, uint256 amount)
+        external returns (bool);
+    function balanceOf(address account) external view returns (uint256);
 }
 
 contract EthenaS06SequentialMintCapTest is Test {
@@ -83,7 +77,6 @@ contract EthenaS06SequentialMintCapTest is Test {
     function _seedAuthorization() internal {
         bytes32 member = bytes32(uint256(uint160(MINTER)));
 
-        // Local fork only: whitelist.
         vm.store(MINTING, bytes32(uint256(4)), bytes32(uint256(1)));
         vm.store(MINTING, keccak256(abi.encode(uint256(4))), member);
         vm.store(
@@ -92,7 +85,6 @@ contract EthenaS06SequentialMintCapTest is Test {
             bytes32(uint256(1))
         );
 
-        // Local fork only: approved beneficiary set.
         uint256 setBase = uint256(keccak256(abi.encode(MINTER, uint256(6))));
         vm.store(MINTING, bytes32(setBase), bytes32(uint256(1)));
         vm.store(MINTING, keccak256(abi.encode(setBase)), member);
@@ -102,7 +94,6 @@ contract EthenaS06SequentialMintCapTest is Test {
             bytes32(uint256(1))
         );
 
-        // Local fork only: AccessControl role; assumes _roles is slot 0.
         bytes32 roleDataSlot = keccak256(abi.encode(MINTER_ROLE, uint256(0)));
         vm.store(
             MINTING,
@@ -119,7 +110,6 @@ contract EthenaS06SequentialMintCapTest is Test {
     }
 
     function _seedAssetMinted(uint128 value) internal {
-        // Storage slot 14 is an assumption from the existing repo test.
         bytes32 outer = keccak256(abi.encode(block.number, uint256(14)));
         bytes32 slot = keccak256(abi.encode(USDC, outer));
         vm.store(MINTING, slot, bytes32(uint256(value)));
@@ -130,7 +120,6 @@ contract EthenaS06SequentialMintCapTest is Test {
     }
 
     function _seedGlobalMinted(uint128 value) internal {
-        // Storage slot 13 is an assumption from the existing repo test.
         bytes32 slot = keccak256(abi.encode(block.number, uint256(13)));
         vm.store(MINTING, slot, bytes32(uint256(value)));
 
@@ -161,7 +150,10 @@ contract EthenaS06SequentialMintCapTest is Test {
         uint128[] memory ratios = new uint128[](1);
         addresses[0] = CUSTODIAN;
         ratios[0] = 10_000;
-        route = IS06SequentialMint.Route({addresses: addresses, ratios: ratios});
+        route = IS06SequentialMint.Route({
+            addresses: addresses,
+            ratios: ratios
+        });
     }
 
     function _sign(IS06SequentialMint.Order memory order)
@@ -222,11 +214,45 @@ contract EthenaS06SequentialMintCapTest is Test {
         );
     }
 
+    function _readCounters()
+        internal view
+        returns (uint128 assetCount, uint128 globalCount)
+    {
+        (assetCount,) = target.totalPerBlockPerAsset(block.number, USDC);
+        (globalCount,) = target.totalPerBlock(block.number);
+    }
+
+    function _assertCounters(
+        uint128 expectedAsset,
+        uint128 expectedGlobal,
+        string memory reason
+    ) internal view {
+        (uint128 actualAsset, uint128 actualGlobal) = _readCounters();
+        assertEq(actualAsset, expectedAsset, reason);
+        assertEq(actualGlobal, expectedGlobal, reason);
+    }
+
     function test_SequentialMintCountersAndOverCapRejection() external {
         _seedAuthorization();
 
+        // Test-only balance and approval changes on the local fork.
+        deal(USDC, MINTER, 10_000_000);
+
+        vm.prank(MINTER);
+        require(
+            IERC20MintTest(USDC).approve(MINTING, type(uint256).max),
+            "USDC approval failed"
+        );
+
+        assertGe(
+            IERC20MintTest(USDC).balanceOf(MINTER),
+            2_000_000,
+            "MINTER lacks USDC for two boundary mints"
+        );
+
         (, bool active, uint128 assetCap,) = target.tokenConfig(USDC);
         (uint128 globalCap,) = target.globalConfig();
+
         assertTrue(active, "USDC inactive");
         assertGt(assetCap, 0, "asset cap is zero");
         assertGt(globalCap, 0, "global cap is zero");
@@ -234,58 +260,42 @@ contract EthenaS06SequentialMintCapTest is Test {
         uint128 effectiveCap = assetCap < globalCap ? assetCap : globalCap;
         uint128 unit = 1e18;
 
-        // Only test this setup if the cap is large enough for three increments.
         assertGt(effectiveCap, 3 * unit, "cap too small for sequential test");
 
-        // Seed counters immediately below the cap; this is NOT a natural
-        // from-zero accumulation test. It allows a real mint to cross a
-        // precisely controlled boundary on the local fork.
         uint128 starting = effectiveCap - 2 * unit;
         _seedAssetMinted(starting);
         _seedGlobalMinted(starting);
 
-        (uint128 assetBefore,) =
-            target.totalPerBlockPerAsset(block.number, USDC);
-        (uint128 globalBefore,) = target.totalPerBlock(block.number);
+        (uint128 assetBefore, uint128 globalBefore) = _readCounters();
 
-        // Each order mints one USDe (1e18). USDC collateral is 1e6 (1 USDC).
         IS06SequentialMint.Order memory first = _order(1e6, unit, 906201);
         (bool firstOk, bytes memory firstData) = _attemptMint(first);
-        if (!firstOk) {
-            emit log_named_bytes("First mint revert", firstData);
-        }
+        if (!firstOk) emit log_named_bytes("First mint revert", firstData);
         assertTrue(firstOk, "first boundary mint failed");
 
-        (uint128 assetAfterFirst,) =
-            target.totalPerBlockPerAsset(block.number, USDC);
-        (uint128 globalAfterFirst,) = target.totalPerBlock(block.number);
-
-        assertEq(
-            uint256(assetAfterFirst),
-            uint256(assetBefore) + unit,
-            "asset counter did not increase after first mint"
-        );
-        assertEq(
-            uint256(globalAfterFirst),
-            uint256(globalBefore) + unit,
-            "global counter did not increase after first mint"
+        _assertCounters(
+            assetBefore + unit,
+            globalBefore + unit,
+            "counters incorrect after first mint"
         );
 
         IS06SequentialMint.Order memory second = _order(1e6, unit, 906202);
         (bool secondOk, bytes memory secondData) = _attemptMint(second);
-        if (!secondOk) {
-            emit log_named_bytes("Second mint revert", secondData);
-        }
+        if (!secondOk) emit log_named_bytes("Second mint revert", secondData);
         assertTrue(secondOk, "second boundary mint failed");
 
-        (uint128 assetAtCap,) =
-            target.totalPerBlockPerAsset(block.number, USDC);
-        (uint128 globalAtCap,) = target.totalPerBlock(block.number);
+        (uint128 assetAtCap, uint128 globalAtCap) = _readCounters();
 
-        assertEq(uint256(assetAtCap), uint256(assetCap < globalCap ? assetCap : starting + 2 * unit),
-            "asset counter unexpected at boundary");
-        assertEq(uint256(globalAtCap), uint256(globalCap < assetCap ? globalCap : starting + 2 * unit),
-            "global counter unexpected at boundary");
+        assertEq(
+            assetAtCap,
+            assetBefore + 2 * unit,
+            "asset counter unexpected at boundary"
+        );
+        assertEq(
+            globalAtCap,
+            globalBefore + 2 * unit,
+            "global counter unexpected at boundary"
+        );
 
         IS06SequentialMint.Order memory third = _order(1e6, unit, 906203);
         (bool thirdOk, bytes memory thirdData) = _attemptMint(third);
@@ -293,15 +303,12 @@ contract EthenaS06SequentialMintCapTest is Test {
         assertFalse(thirdOk, "third mint unexpectedly passed cap");
         _assertCapError(thirdData);
 
-        // A failed mint must not change the counters.
-        (uint128 assetAfterFailure,) =
-            target.totalPerBlockPerAsset(block.number, USDC);
-        (uint128 globalAfterFailure,) = target.totalPerBlock(block.number);
+        _assertCounters(
+            assetAtCap,
+            globalAtCap,
+            "counter changed after failed mint"
+        );
 
-        assertEq(assetAfterFailure, assetAtCap, "asset counter changed on failed mint");
-        assertEq(globalAfterFailure, globalAtCap, "global counter changed on failed mint");
-
-        // A new block should have independent counters.
         uint256 nextBlock = block.number + 1;
         vm.roll(nextBlock);
 
