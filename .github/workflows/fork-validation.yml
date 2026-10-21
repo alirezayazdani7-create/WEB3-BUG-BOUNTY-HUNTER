@@ -18,10 +18,11 @@ jobs:
   local-fork-validation:
     name: Ethena Local Fork Validation
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     env:
       ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
+      ETHENA_FORK_RPC: ${{ secrets.ETH_RPC_URL }}
 
     steps:
       - name: Checkout repository
@@ -73,20 +74,22 @@ jobs:
           test -f test/EthenaAdminRoleDiagnostic.t.sol
           test -f test/P302_AdminSurfaceAccessControl.t.sol
           test -f test/P303_AccessControlIntegrity.t.sol
+          test -f test/EthenaS06CumulativeCapEnforcement.t.sol
 
           grep -q "function test_UnauthorizedCannotRemoveSupportedAsset" \
             test/P301_UnauthorizedRemovalProof.t.sol
-
           grep -q "function test_ReadOnlyAdminRoleDiagnostics" \
             test/EthenaAdminRoleDiagnostic.t.sol
-
           grep -q "function test_UnauthorizedAdminSurfaceIsBlocked" \
             test/P302_AdminSurfaceAccessControl.t.sol
-
           grep -q "function test_UnauthorizedCallsPreserveAdminAndAssetState" \
             test/P303_AccessControlIntegrity.t.sol
+          grep -q "function test_SequentialMintCountersAndOverCapRejection" \
+            test/EthenaS06CumulativeCapEnforcement.t.sol
+          grep -q "function test_RejectsCumulativeMintAboveGlobalCap" \
+            test/EthenaS06CumulativeCapEnforcement.t.sol
 
-          echo "All four diagnostic test files were found."
+          echo "All diagnostic and S06 test files were found."
 
       - name: Safety declaration
         shell: bash
@@ -96,6 +99,7 @@ jobs:
           echo "MAINNET_TRANSACTIONS=NONE"
           echo "TEST_MODE=LOCAL_FORK_SIMULATION"
           echo "ADMIN_CHECKS=LOCAL_FORK_ONLY"
+          echo "S06_CAP_TESTS=LOCAL_FORK_ONLY"
 
       - name: Run P301 unauthorized access-control test
         shell: bash
@@ -133,6 +137,14 @@ jobs:
             --match-test test_UnauthorizedCallsPreserveAdminAndAssetState \
             -vvv
 
+      - name: Run S06 cumulative mint-cap tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          forge test \
+            --match-path test/EthenaS06CumulativeCapEnforcement.t.sol \
+            -vvv
+
       - name: Record validation status
         if: always()
         shell: bash
@@ -143,3 +155,4 @@ jobs:
           echo "P301: unauthorized asset removal test"
           echo "P302: admin surface access-control test"
           echo "P303: unauthorized calls preserve admin and asset state"
+          echo "S06: sequential mint and cumulative global-cap tests"
