@@ -1,0 +1,206 @@
+name: Ethena V2 Consolidated Unresolved-Paths Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_accounting:
+        description: "Include P30 WETH accounting probes"
+        required: true
+        type: boolean
+        default: true
+      run_delegation:
+        description: "Include delegated-signer lifecycle probes"
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ethena-v2-consolidated-unresolved-audit
+  cancel-in-progress: false
+
+jobs:
+  consolidated-local-fork:
+    name: Run unresolved test paths independently
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    env:
+      ETH_RPC_URL: ${{ secrets.ETHENA_FORK_RPC != '' && secrets.ETHENA_FORK_RPC || 'https://ethereum-rpc.publicnode.com' }}
+      EXECUTION_MODE: LOCAL_FORK_ONLY
+      MAINNET_TRANSACTIONS: "NONE"
+      LIVE_EXECUTION: PROHIBITED
+      BOUNTY_SUBMISSION: NOT_PERFORMED
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Prepare isolated test harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ethena-consolidated/test /tmp/ethena-consolidated/lib
+          cat > /tmp/ethena-consolidated/foundry.toml <<'TOML'
+          [profile.default]
+          src = "src"
+          test = "test"
+          script = "script"
+          out = "out"
+          libs = ["lib"]
+          auto_detect_solc = true
+          optimizer = true
+          optimizer_runs = 200
+          via_ir = true
+          bytecode_hash = "none"
+          TOML
+          git clone --depth 1 https://github.com/foundry-rs/forge-std.git /tmp/ethena-consolidated/lib/forge-std
+          test -f /tmp/ethena-consolidated/lib/forge-std/src/Test.sol
+          test -n "${ETH_RPC_URL}"
+          echo "EXECUTION_MODE=${EXECUTION_MODE}"
+          echo "MAINNET_TRANSACTIONS=${MAINNET_TRANSACTIONS}"
+          echo "LIVE_EXECUTION=${LIVE_EXECUTION}"
+          echo "BOUNTY_SUBMISSION=${BOUNTY_SUBMISSION}"
+          echo "HARNESS_SETUP=PASS"
+
+      - name: Verify fork endpoint and target bytecode
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHAIN_ID="$(cast chain-id --rpc-url "$ETH_RPC_URL")"
+          CODE="$(cast code 0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3 --rpc-url "$ETH_RPC_URL")"
+          test "$CHAIN_ID" = "1"
+          test "$CODE" != "0x"
+          echo "REMOTE_CHAIN_ID=$CHAIN_ID"
+          echo "TARGET_BYTECODE_PRESENT=PASS"
+          echo "No transaction will be sent to the remote endpoint."
+
+      - name: Run unresolved tests one by one
+        shell: bash
+        env:
+          RUN_ACCOUNTING: ${{ inputs.run_accounting }}
+          RUN_DELEGATION: ${{ inputs.run_delegation }}
+        run: |
+          set -uo pipefail
+          ROOT="$GITHUB_WORKSPACE"
+          SUITE="/tmp/ethena-consolidated"
+          REPORT="$GITHUB_WORKSPACE/consolidated-audit-results.csv"
+          LOGDIR="$GITHUB_WORKSPACE/consolidated-audit-logs"
+          mkdir -p "$LOGDIR"
+          printf 'test_file,status,exit_code\n' > "$REPORT"
+
+          tests=(
+            "test/EthenaP14LargeAmountBoundary.t.sol"
+            "test/EthenaP14Rounding234.t.sol"
+            "test/MintingV2P14LargeAmountFullPath.t.sol"
+            "test/MintingV2P15Scaling.t.sol"
+            "test/MintingV2P16SignatureBinding.t.sol"
+            "test/MintingV2P17EIP1271Boundary.t.sol"
+            "test/MintingV2P18ERC1271FullPath.t.sol"
+            "test/MintingV2P19NonceReplay.t.sol"
+            "test/MintingV2P20WETHDiagnostic.t.sol"
+            "test/MintingV2P20WETHFullPath.t.sol"
+            "test/EthenaS08TokenConfigLifecycle.t.sol"
+          )
+
+          if [ "$RUN_DELEGATION" = "true" ]; then
+            tests+=(
+              "test/MintingV2P21DelegatedSignerLifecycle.t.sol"
+              "test/MintingV2P22DelegatedSignerFullPath.t.sol"
+              "test/MintingV2P26DelegatedRedeemLifecycle.t.sol"
+              "test/MintingV2P27DelegatedReaddResurrection.t.sol"
+              "test/MintingV2P28BenefactorReaddAuthorization.t.sol"
+            )
+          fi
+
+          if [ "$RUN_ACCOUNTING" = "true" ]; then
+            tests+=(
+              "test/P30_1_MintWETHAccountingDiscovery.t.sol"
+              "test/P30_MintWETHAccountingInvariant.t.sol"
+            )
+          fi
+
+          failures=0
+          passes=0
+          skipped=0
+
+          for rel in "${tests[@]}"; do
+            if [ ! -f "$ROOT/$rel" ]; then
+              echo "$rel,MISSING_FILE,127" >> "$REPORT"
+              failures=$((failures + 1))
+              echo "MISSING TEST FILE: $rel"
+              continue
+            fi
+
+            echo
+            echo "=================================================="
+            echo "RUNNING: $rel"
+            echo "=================================================="
+            cp "$ROOT/$rel" "$SUITE/test/ConsolidatedSingleTest.t.sol"
+            safe_name="$(basename "$rel" .t.sol)"
+            set +e
+            (
+              cd "$SUITE"
+              ETH_RPC_URL="$ETH_RPC_URL" forge test \
+                --root "$SUITE" \
+                --match-path test/ConsolidatedSingleTest.t.sol \
+                --fork-url "$ETH_RPC_URL" \
+                -vv
+            ) 2>&1 | tee "$LOGDIR/$safe_name.log"
+            rc=${PIPESTATUS[0]}
+            set -e
+
+            if [ "$rc" -eq 0 ]; then
+              echo "$rel,PASS,0" >> "$REPORT"
+              passes=$((passes + 1))
+            else
+              echo "$rel,FAIL,$rc" >> "$REPORT"
+              failures=$((failures + 1))
+            fi
+          done
+
+          {
+            echo
+            echo "## Consolidated Ethena V2 audit suite"
+            echo
+            echo "- Passed test files: $passes"
+            echo "- Failed test files: $failures"
+            echo "- Skipped by input: $skipped"
+            echo "- A passing test means the asserted behavior held; it does not by itself prove the absence or presence of a bounty-eligible vulnerability."
+            echo "- This suite does not submit reports and does not send transactions to mainnet."
+            echo
+            cat "$REPORT"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "TEST_FILES_PASS=$passes"
+          echo "TEST_FILES_FAIL=$failures"
+          echo "TEST_FILES_SKIPPED=$skipped"
+          echo "REPORT=$REPORT"
+          test "$failures" -eq 0
+
+      - name: Safety invariants
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$EXECUTION_MODE" = "LOCAL_FORK_ONLY"
+          test "$MAINNET_TRANSACTIONS" = "NONE"
+          test "$LIVE_EXECUTION" = "PROHIBITED"
+          test "$BOUNTY_SUBMISSION" = "NOT_PERFORMED"
+          echo "SAFETY_INVARIANTS=PASS"
+
+      - name: Upload consolidated results and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethena-v2-consolidated-audit-results
+          path: |
+            consolidated-audit-results.csv
+            consolidated-audit-logs/
+          if-no-files-found: warn
+          retention-days: 30
