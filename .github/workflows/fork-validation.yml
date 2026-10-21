@@ -1,3 +1,4 @@
+
 name: Fork Validation Lab
 
 on:
@@ -71,6 +72,7 @@ jobs:
           test -f test/P301_UnauthorizedRemovalProof.t.sol
           test -f test/EthenaAdminRoleDiagnostic.t.sol
           test -f test/P302_AdminSurfaceAccessControl.t.sol
+          test -f test/P303_AccessControlIntegrity.t.sol
 
           grep -q "function test_UnauthorizedCannotRemoveSupportedAsset" \
             test/P301_UnauthorizedRemovalProof.t.sol
@@ -81,7 +83,10 @@ jobs:
           grep -q "function test_UnauthorizedAdminSurfaceIsBlocked" \
             test/P302_AdminSurfaceAccessControl.t.sol
 
-          echo "All three diagnostic test files were found."
+          grep -q "function test_UnauthorizedCallsPreserveAdminAndAssetState" \
+            test/P303_AccessControlIntegrity.t.sol
+
+          echo "All four diagnostic test files were found."
 
       - name: Safety declaration
         shell: bash
@@ -119,6 +124,15 @@ jobs:
             --match-test test_UnauthorizedAdminSurfaceIsBlocked \
             -vvv
 
+      - name: Run P303 access-control integrity test
+        shell: bash
+        run: |
+          set -euo pipefail
+          forge test \
+            --match-path test/P303_AccessControlIntegrity.t.sol \
+            --match-test test_UnauthorizedCallsPreserveAdminAndAssetState \
+            -vvv
+
       - name: Record validation status
         if: always()
         shell: bash
@@ -128,3 +142,4 @@ jobs:
           echo "Mainnet transactions: none"
           echo "P301: unauthorized asset removal test"
           echo "P302: admin surface access-control test"
+          echo "P303: unauthorized calls preserve admin and asset state"
