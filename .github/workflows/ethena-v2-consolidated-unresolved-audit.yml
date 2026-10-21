@@ -1,3 +1,4 @@
+
 name: Ethena V2 Consolidated Unresolved-Paths Audit
 
 on:
@@ -29,6 +30,7 @@ jobs:
 
     env:
       ETH_RPC_URL: ${{ secrets.ETHENA_FORK_RPC != '' && secrets.ETHENA_FORK_RPC || 'https://ethereum-rpc.publicnode.com' }}
+      ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC != '' && secrets.ETHENA_FORK_RPC || 'https://ethereum-rpc.publicnode.com' }}
       EXECUTION_MODE: LOCAL_FORK_ONLY
       MAINNET_TRANSACTIONS: "NONE"
       LIVE_EXECUTION: PROHIBITED
@@ -143,10 +145,13 @@ jobs:
             echo "=================================================="
             cp "$ROOT/$rel" "$SUITE/test/ConsolidatedSingleTest.t.sol"
             safe_name="$(basename "$rel" .t.sol)"
+
             set +e
             (
               cd "$SUITE"
-              ETH_RPC_URL="$ETH_RPC_URL" forge test \
+              ETH_RPC_URL="$ETH_RPC_URL" \
+              ETHENA_FORK_RPC="$ETHENA_FORK_RPC" \
+              forge test \
                 --root "$SUITE" \
                 --match-path test/ConsolidatedSingleTest.t.sol \
                 --fork-url "$ETH_RPC_URL" \
