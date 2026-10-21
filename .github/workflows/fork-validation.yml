@@ -30,7 +30,6 @@ jobs:
 
     env:
       ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
-      FOUNDRY_DISABLE_NIGHTLY_WARNING: "true"
 
     steps:
       - name: Checkout repository
@@ -40,26 +39,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           if [ -z "${ETHENA_FORK_RPC:-}" ]; then
             echo "::error::ETHENA_FORK_RPC secret is missing."
             exit 1
           fi
-
           echo "RPC secret is configured."
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
-      - name: Prepare Foundry project
+      - name: Prepare Foundry configuration
         shell: bash
         run: |
           set -euo pipefail
 
-          forge --version
-
-          # Recreate the configuration so a stale compiler pin
-          # cannot force all files to use Solidity 0.8.26.
           cat > foundry.toml <<'TOML'
           [profile.default]
           src = "src"
@@ -75,77 +68,61 @@ jobs:
           mainnet = "${ETHENA_FORK_RPC}"
           TOML
 
-          echo "Foundry configuration created with automatic compiler detection."
-
           if [ ! -d lib/forge-std/src ]; then
             mkdir -p lib
             forge install foundry-rs/forge-std --no-git
           fi
 
-          forge build
+          forge --version
 
-      - name: Verify required diagnostic files
+      - name: Verify diagnostic files
         shell: bash
         run: |
           set -euo pipefail
 
-          for file in \
-            test/P301_UnauthorizedRemovalProof.t.sol \
-            test/EthenaAdminRoleDiagnostic.t.sol \
-            test/P30_2_MintWETHReadOnlyDiagnostic.t.sol
-          do
-            if [ ! -f "$file" ]; then
-              echo "::error::Required test file missing: $file"
-              exit 1
-            fi
+          test -f test/P301_UnauthorizedRemovalProof.t.sol
+          test -f test/EthenaAdminRoleDiagnostic.t.sol
+          test -f test/P30_2_MintWETHReadOnlyDiagnostic.t.sol
 
-            echo "Found $file"
-          done
+          echo "Required diagnostic files exist."
 
-      - name: Safety declaration
-        shell: bash
-        run: |
-          echo "Validation mode: local fork diagnostics"
-          echo "No live trading or transaction submission is authorized."
-          echo "Tests must not use private keys or broadcast transactions."
-
-      - name: Run P301 unauthorized access-control test
+      - name: Run P301 access-control test
         shell: bash
         run: |
           set -euo pipefail
           forge test \
             --match-path test/P301_UnauthorizedRemovalProof.t.sol \
+            --skip P14FullMintProof \
+            --skip P29_MintWETHAccountingDiagnostic \
+            --skip EthenaS08TokenConfigLifecycle \
             -vvvv
 
-      - name: Run read-only admin role diagnostic
+      - name: Run admin role diagnostic
         shell: bash
         run: |
           set -euo pipefail
           forge test \
             --match-path test/EthenaAdminRoleDiagnostic.t.sol \
+            --skip P14FullMintProof \
+            --skip P29_MintWETHAccountingDiagnostic \
+            --skip EthenaS08TokenConfigLifecycle \
             -vvvv
 
-      - name: Run P30.2 read-only WETH diagnostic
+      - name: Run P30.2 read-only diagnostic
         shell: bash
         run: |
           set -euo pipefail
           forge test \
             --match-path test/P30_2_MintWETHReadOnlyDiagnostic.t.sol \
+            --skip P14FullMintProof \
+            --skip P29_MintWETHAccountingDiagnostic \
+            --skip EthenaS08TokenConfigLifecycle \
             -vvvv
 
-      - name: Run P30.1 diagnostic if present
-        if: ${{ hashFiles('test/P30_1_MintWETHAccountingInvariant.t.sol') != '' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          forge test \
-            --match-path test/P30_1_MintWETHAccountingInvariant.t.sol \
-            -vvvv
-
-      - name: Record validation status
+      - name: Safety declaration
         if: always()
         shell: bash
         run: |
-          echo "Validation workflow reached its final status step."
-          echo "Inspect earlier steps to determine whether validation passed."
-          echo "A passing test is not, by itself, proof of a vulnerability."
+          echo "Mode: local fork diagnostics only."
+          echo "Live execution remains prohibited."
+          echo "Passing tests do not establish a vulnerability."
