@@ -1,5 +1,4 @@
-
- // SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 pragma solidity 0.8.20;
 
 import "forge-std/Test.sol";
@@ -9,8 +8,10 @@ contract EthenaAdminRoleDiagnostic is Test {
         0xe3490297a08d6fC8Da46Edb7B6142E4F461b62D3;
 
     address constant PROBE = address(1);
+
     address constant USDC =
-        address(bytes20(hex"a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"));
+        0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+
     bytes32 constant DEFAULT_ADMIN_ROLE = bytes32(0);
 
     function setUp() public {
@@ -23,6 +24,7 @@ contract EthenaAdminRoleDiagnostic is Test {
         emit log_named_uint("chainId", block.chainid);
         emit log_named_uint("forkBlock", block.number);
 
+        // Check whether the probe account has the default admin role.
         _logCall(
             "hasRole(DEFAULT_ADMIN_ROLE, PROBE)",
             abi.encodeWithSignature(
@@ -32,6 +34,7 @@ contract EthenaAdminRoleDiagnostic is Test {
             )
         );
 
+        // Read the role that administers DEFAULT_ADMIN_ROLE.
         _logCall(
             "getRoleAdmin(DEFAULT_ADMIN_ROLE)",
             abi.encodeWithSignature(
@@ -40,16 +43,25 @@ contract EthenaAdminRoleDiagnostic is Test {
             )
         );
 
+        // Read owner() and, if available, check its admin role.
         (bool ownerOk, bytes memory ownerData) =
-            TARGET.staticcall(abi.encodeWithSignature("owner()"));
+            TARGET.staticcall(
+                abi.encodeWithSignature("owner()")
+            );
 
         emit log_string("owner()");
-        emit log_named_uint("staticcallSuccess", ownerOk ? 1 : 0);
+        emit log_named_uint(
+            "staticcallSuccess",
+            ownerOk ? 1 : 0
+        );
         emit log_named_bytes("returnData", ownerData);
 
         if (ownerOk && ownerData.length >= 32) {
-            address ownerAddress = abi.decode(ownerData, (address));
-            emit log_address("decodedOwner", ownerAddress);
+            address ownerAddress =
+                abi.decode(ownerData, (address));
+
+            emit log_string("decodedOwner");
+            emit log_address(ownerAddress);
 
             _logCall(
                 "hasRole(DEFAULT_ADMIN_ROLE, owner())",
@@ -63,11 +75,13 @@ contract EthenaAdminRoleDiagnostic is Test {
             emit log_string("Owner role check skipped");
         }
 
+        // Read the contract's DEFAULT_ADMIN_ROLE constant.
         _logCall(
             "DEFAULT_ADMIN_ROLE()",
             abi.encodeWithSignature("DEFAULT_ADMIN_ROLE()")
         );
 
+        // Confirm whether USDC is currently supported.
         _logCall(
             "isSupportedAsset(USDC)",
             abi.encodeWithSignature(
@@ -76,6 +90,8 @@ contract EthenaAdminRoleDiagnostic is Test {
             )
         );
 
+        // Read-only probe only. This does NOT execute a removal.
+        // A failure here is not proof of an access-control vulnerability.
         _logCall(
             "removeSupportedAsset(USDC) via staticcall",
             abi.encodeWithSignature(
@@ -89,10 +105,14 @@ contract EthenaAdminRoleDiagnostic is Test {
         string memory label,
         bytes memory payload
     ) internal {
-        (bool ok, bytes memory data) = TARGET.staticcall(payload);
+        (bool ok, bytes memory data) =
+            TARGET.staticcall(payload);
 
         emit log_string(label);
-        emit log_named_uint("staticcallSuccess", ok ? 1 : 0);
+        emit log_named_uint(
+            "staticcallSuccess",
+            ok ? 1 : 0
+        );
         emit log_named_bytes("returnData", data);
     }
 }
