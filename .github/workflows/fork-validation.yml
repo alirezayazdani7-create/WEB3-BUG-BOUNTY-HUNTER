@@ -26,7 +26,7 @@ jobs:
   ethena-local-fork-validation:
     name: Ethena Local Fork Validation
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     env:
       ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
@@ -40,11 +40,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           if [ -z "${ETHENA_FORK_RPC:-}" ]; then
-            echo "::error::ETHENA_FORK_RPC repository secret is missing."
+            echo "::error::ETHENA_FORK_RPC secret is missing."
             exit 1
           fi
-          echo "RPC secret is configured. Value will not be printed."
+
+          echo "RPC secret is configured."
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
@@ -56,63 +58,56 @@ jobs:
 
           forge --version
 
-          if [ ! -f foundry.toml ]; then
-            echo "foundry.toml not found; creating a minimal configuration."
-
-            cat > foundry.toml <<'TOML'
+          # Recreate the configuration so a stale compiler pin
+          # cannot force all files to use Solidity 0.8.26.
+          cat > foundry.toml <<'TOML'
           [profile.default]
           src = "src"
           test = "test"
           script = "script"
           out = "out"
           libs = ["lib"]
-          solc_version = "0.8.26"
-          auto_detect_solc = false
+          auto_detect_solc = true
           optimizer = true
           optimizer_runs = 200
 
           [rpc_endpoints]
           mainnet = "${ETHENA_FORK_RPC}"
           TOML
-          fi
 
-          echo "Foundry configuration:"
-          cat foundry.toml
+          echo "Foundry configuration created with automatic compiler detection."
 
-          if [ ! -d lib/forge-std ]; then
-            echo "forge-std not found; installing dependency."
+          if [ ! -d lib/forge-std/src ]; then
             mkdir -p lib
             forge install foundry-rs/forge-std --no-git
           fi
 
           forge build
 
-      - name: Verify diagnostic test files
+      - name: Verify required diagnostic files
         shell: bash
         run: |
           set -euo pipefail
 
-          required_files=(
-            "test/P301_UnauthorizedRemovalProof.t.sol"
-            "test/EthenaAdminRoleDiagnostic.t.sol"
-            "test/P30_2_MintWETHReadOnlyDiagnostic.t.sol"
-          )
-
-          for file in "${required_files[@]}"; do
+          for file in \
+            test/P301_UnauthorizedRemovalProof.t.sol \
+            test/EthenaAdminRoleDiagnostic.t.sol \
+            test/P30_2_MintWETHReadOnlyDiagnostic.t.sol
+          do
             if [ ! -f "$file" ]; then
-              echo "::error::Required test file not found: $file"
+              echo "::error::Required test file missing: $file"
               exit 1
             fi
-            echo "Found: $file"
+
+            echo "Found $file"
           done
 
       - name: Safety declaration
         shell: bash
         run: |
-          echo "Mode: LOCAL FORK DIAGNOSTICS"
-          echo "No private keys are configured by this workflow."
-          echo "No live transaction submission is intended."
-          echo "Fork tests must not be treated as authorization for live execution."
+          echo "Validation mode: local fork diagnostics"
+          echo "No live trading or transaction submission is authorized."
+          echo "Tests must not use private keys or broadcast transactions."
 
       - name: Run P301 unauthorized access-control test
         shell: bash
@@ -120,7 +115,6 @@ jobs:
           set -euo pipefail
           forge test \
             --match-path test/P301_UnauthorizedRemovalProof.t.sol \
-            --match-test test_UnauthorizedCannotRemoveSupportedAsset \
             -vvvv
 
       - name: Run read-only admin role diagnostic
@@ -129,7 +123,6 @@ jobs:
           set -euo pipefail
           forge test \
             --match-path test/EthenaAdminRoleDiagnostic.t.sol \
-            --match-test test_ReadOnlyAdminRoleDiagnostics \
             -vvvv
 
       - name: Run P30.2 read-only WETH diagnostic
@@ -138,13 +131,21 @@ jobs:
           set -euo pipefail
           forge test \
             --match-path test/P30_2_MintWETHReadOnlyDiagnostic.t.sol \
-            --match-test test_P302_ReadOnlyConfigurationDiagnostic \
+            -vvvv
+
+      - name: Run P30.1 diagnostic if present
+        if: ${{ hashFiles('test/P30_1_MintWETHAccountingInvariant.t.sol') != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          forge test \
+            --match-path test/P30_1_MintWETHAccountingInvariant.t.sol \
             -vvvv
 
       - name: Record validation status
         if: always()
         shell: bash
         run: |
-          echo "Fork validation workflow finished."
-          echo "Review every test result before drawing conclusions."
-          echo "Passing tests do not independently prove a vulnerability."
+          echo "Validation workflow reached its final status step."
+          echo "Inspect earlier steps to determine whether validation passed."
+          echo "A passing test is not, by itself, proof of a vulnerability."
