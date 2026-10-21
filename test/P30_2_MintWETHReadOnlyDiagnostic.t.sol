@@ -4,24 +4,25 @@ pragma solidity ^0.8.26;
 import "forge-std/Test.sol";
 
 interface IP30Diagnostic {
+    struct Route {
+        address[] addresses;
+        uint128[] ratios;
+    }
+
     function hasRole(bytes32 role, address account)
         external
         view
         returns (bool);
 
-    function verifyRoute(
-        Route calldata route
-    ) external view returns (bool);
+    function verifyRoute(Route calldata route)
+        external
+        view
+        returns (bool);
 
     function isCustodianAddress(address custodian)
         external
         view
         returns (bool);
-
-    struct Route {
-        address[] addresses;
-        uint128[] ratios;
-    }
 }
 
 contract P30_2_MintWETHReadOnlyDiagnostic is Test {
@@ -68,13 +69,11 @@ contract P30_2_MintWETHReadOnlyDiagnostic is Test {
             "Minting bytecode length",
             MINTING.code.length
         );
-
         emit log_named_uint("WETH bytecode length", WETH.code.length);
         emit log_named_uint("USDe bytecode length", USDE.code.length);
 
         bool minter1HasRole =
             target.hasRole(MINTER_ROLE, MINTER_1);
-
         bool minter2HasRole =
             target.hasRole(MINTER_ROLE, MINTER_2);
 
@@ -136,15 +135,14 @@ contract P30_2_MintWETHReadOnlyDiagnostic is Test {
             emit log_bytes(routeRet);
         }
 
-        emit log_bytes4(
-            "Previously observed mintWETH error selector:",
-            OBSERVED_ERROR_SELECTOR
+        emit log_string(
+            "Previously observed mintWETH error selector:"
         );
+        emit log_bytes(abi.encodePacked(OBSERVED_ERROR_SELECTOR));
 
         emit log_string(
             "READ-ONLY ONLY: mintWETH was NOT called."
         );
-
         emit log_string(
             "No token transfer or contract state change was attempted."
         );
