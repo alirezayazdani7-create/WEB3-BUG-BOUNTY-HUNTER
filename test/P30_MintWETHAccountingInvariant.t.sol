@@ -184,10 +184,14 @@ contract P30MintWETHAccountingInvariantTest is Test {
         });
     }
 
-    function _signature() internal pure returns (IMintingP30.Signature memory sig) {
+    function _signature()
+        internal
+        pure
+        returns (IMintingP30.Signature memory sig)
+    {
         sig = IMintingP30.Signature({
             signature_type: IMintingP30.SignatureType.EIP1271,
-            signature_bytes: hex"5033302d574554482d4143434f554e54494e47"
+            signature_bytes: hex"5033302d574554482d4143434f554e54494e47
         });
     }
 
@@ -233,6 +237,7 @@ contract P30MintWETHAccountingInvariantTest is Test {
         IMintingP30.Signature memory sig = _signature();
 
         assertTrue(target.verifyRoute(route), "P30: valid route rejected");
+
         assertTrue(
             target.isCustodianAddress(CUSTODIAN),
             "P30: custodian candidate is not registered"
@@ -240,7 +245,6 @@ contract P30MintWETHAccountingInvariantTest is Test {
 
         address minter = _findMinter();
 
-        // Capture verifyOrder failure details without hiding the failure.
         (bool verifyOk, bytes memory verifyRet) = address(MINTING).staticcall(
             abi.encodeWithSelector(
                 target.verifyOrder.selector,
@@ -264,7 +268,9 @@ contract P30MintWETHAccountingInvariantTest is Test {
         uint256 custodianEthBefore = CUSTODIAN.balance;
         uint256 walletUsdeBefore = usde.balanceOf(address(wallet));
 
-        // Simulate mintWETH first so revert data is logged for diagnosis.
+        // Execute the mint call as the verified MINTER_ROLE account.
+        vm.prank(minter);
+
         (bool mintOk, bytes memory mintRet) = address(MINTING).call(
             abi.encodeWithSelector(
                 target.mintWETH.selector,
@@ -312,7 +318,9 @@ contract P30MintWETHAccountingInvariantTest is Test {
             "P30 ALERT: residual WETH remains"
         );
 
-        emit log_string("P30 PASS: WETH -> ETH -> USDe accounting invariant holds");
+        emit log_string(
+            "P30 PASS: WETH -> ETH -> USDe accounting invariant holds"
+        );
     }
 
     function test_P30_MutatedUsdeAmountCannotCreateMismatch() external {
@@ -356,6 +364,7 @@ contract P30MintWETHAccountingInvariantTest is Test {
         address minter = _findMinter();
 
         vm.prank(minter);
+
         (bool ok, ) = address(MINTING).call(
             abi.encodeWithSelector(
                 target.mintWETH.selector,
@@ -378,6 +387,8 @@ contract P30MintWETHAccountingInvariantTest is Test {
             "P30 ALERT: collateral changed after rejected order"
         );
 
-        emit log_string("P30 PASS: signed USDe amount is bound to execution");
+        emit log_string(
+            "P30 PASS: signed USDe amount is bound to execution"
+        );
     }
 }
