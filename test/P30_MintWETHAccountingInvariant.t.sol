@@ -120,8 +120,6 @@ contract P30MintWETHAccountingInvariantTest is Test {
     address constant CUSTODIAN =
         0x12FDB344e4D195fF6613D0f742a6E38344c8b455;
 
-    // Candidates are verified against the fork's actual MINTER_ROLE.
-    // Do not add guessed addresses.
     address constant MINTER_CANDIDATE_1 =
         0x24bE9948466FEcEB22A9B77b19e404F2119fb962;
 
@@ -242,7 +240,20 @@ contract P30MintWETHAccountingInvariantTest is Test {
 
         address minter = _findMinter();
 
-        target.verifyOrder(order, sig);
+        // Capture verifyOrder failure details without hiding the failure.
+        (bool verifyOk, bytes memory verifyRet) = address(MINTING).staticcall(
+            abi.encodeWithSelector(
+                target.verifyOrder.selector,
+                order,
+                sig
+            )
+        );
+
+        if (!verifyOk) {
+            emit log_string("P30 DIAGNOSTIC: verifyOrder reverted");
+            emit log_bytes(verifyRet);
+            revert("P30: verifyOrder failed; see revert data above");
+        }
 
         assertTrue(
             target.hasRole(MINTER_ROLE, minter),
@@ -253,8 +264,21 @@ contract P30MintWETHAccountingInvariantTest is Test {
         uint256 custodianEthBefore = CUSTODIAN.balance;
         uint256 walletUsdeBefore = usde.balanceOf(address(wallet));
 
-        vm.prank(minter);
-        target.mintWETH(order, route, sig);
+        // Simulate mintWETH first so revert data is logged for diagnosis.
+        (bool mintOk, bytes memory mintRet) = address(MINTING).call(
+            abi.encodeWithSelector(
+                target.mintWETH.selector,
+                order,
+                route,
+                sig
+            )
+        );
+
+        if (!mintOk) {
+            emit log_string("P30 DIAGNOSTIC: mintWETH reverted");
+            emit log_bytes(mintRet);
+            revert("P30: mintWETH failed; see revert data above");
+        }
 
         uint256 walletWethAfter = weth.balanceOf(address(wallet));
         uint256 custodianEthAfter = CUSTODIAN.balance;
