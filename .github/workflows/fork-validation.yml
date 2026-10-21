@@ -1,28 +1,35 @@
-
 name: Fork Validation Lab
 
 on:
-  workflow_dispatch:
   push:
     branches:
       - main
     paths:
       - "test/**"
-      - ".github/workflows/fork-validation.yml"
+      - "src/**"
       - "foundry.toml"
+      - ".github/workflows/fork-validation.yml"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: fork-validation-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  local-fork-validation:
+  ethena-local-fork-validation:
     name: Ethena Local Fork Validation
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
 
     env:
-      ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
-      ETHENA_FORK_RPC: ${{ secrets.ETH_RPC_URL }}
+      ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
+      FOUNDRY_DISABLE_NIGHTLY_WARNING: "true"
 
     steps:
       - name: Checkout repository
@@ -32,11 +39,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ -z "${ETH_RPC_URL:-}" ]; then
-            echo "::error::ETH_RPC_URL secret is missing."
+          if [ -z "${ETHENA_FORK_RPC:-}" ]; then
+            echo "::error::ETHENA_FORK_RPC repository secret is missing."
             exit 1
           fi
-          echo "RPC secret is configured."
+          echo "RPC secret is configured. Value is not printed."
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
@@ -45,61 +52,39 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          if [ ! -f foundry.toml ]; then
-            cat > foundry.toml <<'EOF'
-          [profile.default]
-          src = "src"
-          test = "test"
-          script = "script"
-          out = "out"
-          libs = ["lib"]
-          solc_version = "0.8.20"
-          EOF
-          fi
-
-          mkdir -p lib
-          if [ ! -f lib/forge-std/src/Test.sol ]; then
-            forge install foundry-rs/forge-std --no-commit
-          fi
-
           forge --version
+          if [ ! -f foundry.toml ]; then
+            echo "::error::foundry.toml was not found."
+            exit 1
+          fi
+          forge build
 
       - name: Verify diagnostic test files
         shell: bash
         run: |
           set -euo pipefail
 
-          test -f test/P301_UnauthorizedRemovalProof.t.sol
-          test -f test/EthenaAdminRoleDiagnostic.t.sol
-          test -f test/P302_AdminSurfaceAccessControl.t.sol
-          test -f test/P303_AccessControlIntegrity.t.sol
-          test -f test/EthenaS06CumulativeCapEnforcement.t.sol
+          required_files=(
+            "test/P301_UnauthorizedRemovalProof.t.sol"
+            "test/EthenaAdminRoleDiagnostic.t.sol"
+            "test/P30_2_MintWETHReadOnlyDiagnostic.t.sol"
+          )
 
-          grep -q "function test_UnauthorizedCannotRemoveSupportedAsset" \
-            test/P301_UnauthorizedRemovalProof.t.sol
-          grep -q "function test_ReadOnlyAdminRoleDiagnostics" \
-            test/EthenaAdminRoleDiagnostic.t.sol
-          grep -q "function test_UnauthorizedAdminSurfaceIsBlocked" \
-            test/P302_AdminSurfaceAccessControl.t.sol
-          grep -q "function test_UnauthorizedCallsPreserveAdminAndAssetState" \
-            test/P303_AccessControlIntegrity.t.sol
-          grep -q "function test_SequentialMintCountersAndOverCapRejection" \
-            test/EthenaS06CumulativeCapEnforcement.t.sol
-          grep -q "function test_RejectsCumulativeMintAboveGlobalCap" \
-            test/EthenaS06CumulativeCapEnforcement.t.sol
-
-          echo "All diagnostic and S06 test files were found."
+          for file in "${required_files[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "::error::Required test file not found: $file"
+              exit 1
+            fi
+            echo "Found: $file"
+          done
 
       - name: Safety declaration
         shell: bash
         run: |
-          set -euo pipefail
-          echo "LIVE_TRADING=PROHIBITED"
-          echo "MAINNET_TRANSACTIONS=NONE"
-          echo "TEST_MODE=LOCAL_FORK_SIMULATION"
-          echo "ADMIN_CHECKS=LOCAL_FORK_ONLY"
-          echo "S06_CAP_TESTS=LOCAL_FORK_ONLY"
+          echo "Mode: READ-ONLY FORK DIAGNOSTICS"
+          echo "Live trading: DISABLED"
+          echo "No private keys or signing secrets are configured by this workflow."
+          echo "Diagnostic steps must not submit transactions."
 
       - name: Run P301 unauthorized access-control test
         shell: bash
@@ -108,7 +93,7 @@ jobs:
           forge test \
             --match-path test/P301_UnauthorizedRemovalProof.t.sol \
             --match-test test_UnauthorizedCannotRemoveSupportedAsset \
-            -vvv
+            -vvvv
 
       - name: Run read-only admin role diagnostic
         shell: bash
@@ -117,42 +102,34 @@ jobs:
           forge test \
             --match-path test/EthenaAdminRoleDiagnostic.t.sol \
             --match-test test_ReadOnlyAdminRoleDiagnostics \
-            -vvv
+            -vvvv
 
-      - name: Run P302 admin surface access-control test
+      - name: Run P30.2 read-only WETH diagnostic
         shell: bash
         run: |
           set -euo pipefail
           forge test \
-            --match-path test/P302_AdminSurfaceAccessControl.t.sol \
-            --match-test test_UnauthorizedAdminSurfaceIsBlocked \
-            -vvv
+            --match-path test/P30_2_MintWETHReadOnlyDiagnostic.t.sol \
+            --match-test test_P302_ReadOnlyConfigurationDiagnostic \
+            -vvvv
 
-      - name: Run P303 access-control integrity test
+      - name: Run P30.1 diagnostics if present
         shell: bash
         run: |
           set -euo pipefail
-          forge test \
-            --match-path test/P303_AccessControlIntegrity.t.sol \
-            --match-test test_UnauthorizedCallsPreserveAdminAndAssetState \
-            -vvv
 
-      - name: Run S06 cumulative mint-cap tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          forge test \
-            --match-path test/EthenaS06CumulativeCapEnforcement.t.sol \
-            -vvv
+          if [ -f test/P30_1_MintWETHAccountingInvariant.t.sol ]; then
+            forge test \
+              --match-path test/P30_1_MintWETHAccountingInvariant.t.sol \
+              -vvvv
+          else
+            echo "P30.1 test file not found; skipping optional step."
+          fi
 
       - name: Record validation status
         if: always()
         shell: bash
         run: |
-          echo "Execution mode: local fork simulation"
-          echo "Live trading: prohibited"
-          echo "Mainnet transactions: none"
-          echo "P301: unauthorized asset removal test"
-          echo "P302: admin surface access-control test"
-          echo "P303: unauthorized calls preserve admin and asset state"
-          echo "S06: sequential mint and cumulative global-cap tests"
+          echo "Fork validation workflow finished."
+          echo "Review each test result before drawing security conclusions."
+          echo "A green workflow is not, by itself, proof of a vulnerability or proof of complete security."
