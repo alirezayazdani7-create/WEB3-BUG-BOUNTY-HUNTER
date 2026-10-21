@@ -70,6 +70,7 @@ jobs:
 
           test -f test/P301_UnauthorizedRemovalProof.t.sol
           test -f test/EthenaAdminRoleDiagnostic.t.sol
+          test -f test/P302_AdminSurfaceAccessControl.t.sol
 
           grep -q "function test_UnauthorizedCannotRemoveSupportedAsset" \
             test/P301_UnauthorizedRemovalProof.t.sol
@@ -77,7 +78,10 @@ jobs:
           grep -q "function test_ReadOnlyAdminRoleDiagnostics" \
             test/EthenaAdminRoleDiagnostic.t.sol
 
-          echo "Both test files were found."
+          grep -q "function test_UnauthorizedAdminSurfaceIsBlocked" \
+            test/P302_AdminSurfaceAccessControl.t.sol
+
+          echo "All three diagnostic test files were found."
 
       - name: Safety declaration
         shell: bash
@@ -86,13 +90,12 @@ jobs:
           echo "LIVE_TRADING=PROHIBITED"
           echo "MAINNET_TRANSACTIONS=NONE"
           echo "TEST_MODE=LOCAL_FORK_SIMULATION"
-          echo "DIAGNOSTIC_MODE=READ_ONLY_STATICCALL"
+          echo "ADMIN_CHECKS=LOCAL_FORK_ONLY"
 
       - name: Run P301 unauthorized access-control test
         shell: bash
         run: |
           set -euo pipefail
-
           forge test \
             --match-path test/P301_UnauthorizedRemovalProof.t.sol \
             --match-test test_UnauthorizedCannotRemoveSupportedAsset \
@@ -102,10 +105,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           forge test \
             --match-path test/EthenaAdminRoleDiagnostic.t.sol \
             --match-test test_ReadOnlyAdminRoleDiagnostics \
+            -vvv
+
+      - name: Run P302 admin surface access-control test
+        shell: bash
+        run: |
+          set -euo pipefail
+          forge test \
+            --match-path test/P302_AdminSurfaceAccessControl.t.sol \
+            --match-test test_UnauthorizedAdminSurfaceIsBlocked \
             -vvv
 
       - name: Record validation status
@@ -115,4 +126,5 @@ jobs:
           echo "Execution mode: local fork simulation"
           echo "Live trading: prohibited"
           echo "Mainnet transactions: none"
-          echo "Admin role diagnostic: staticcall only"
+          echo "P301: unauthorized asset removal test"
+          echo "P302: admin surface access-control test"
