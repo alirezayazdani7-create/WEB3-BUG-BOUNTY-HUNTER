@@ -30,20 +30,28 @@ jobs:
 
     env:
       ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
+      ETH_RPC_URL: ${{ secrets.ETHENA_FORK_RPC }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check RPC secret
+      - name: Check RPC configuration
         shell: bash
         run: |
           set -euo pipefail
+
           if [ -z "${ETHENA_FORK_RPC:-}" ]; then
             echo "::error::ETHENA_FORK_RPC secret is missing."
             exit 1
           fi
-          echo "RPC secret is configured."
+
+          if [ -z "${ETH_RPC_URL:-}" ]; then
+            echo "::error::ETH_RPC_URL alias is missing."
+            exit 1
+          fi
+
+          echo "RPC environment variables are configured."
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
@@ -63,9 +71,6 @@ jobs:
           auto_detect_solc = true
           optimizer = true
           optimizer_runs = 200
-
-          [rpc_endpoints]
-          mainnet = "${ETHENA_FORK_RPC}"
           TOML
 
           if [ ! -d lib/forge-std/src ]; then
@@ -92,9 +97,6 @@ jobs:
           set -euo pipefail
           forge test \
             --match-path test/P301_UnauthorizedRemovalProof.t.sol \
-            --skip P14FullMintProof \
-            --skip P29_MintWETHAccountingDiagnostic \
-            --skip EthenaS08TokenConfigLifecycle \
             -vvvv
 
       - name: Run admin role diagnostic
@@ -103,9 +105,6 @@ jobs:
           set -euo pipefail
           forge test \
             --match-path test/EthenaAdminRoleDiagnostic.t.sol \
-            --skip P14FullMintProof \
-            --skip P29_MintWETHAccountingDiagnostic \
-            --skip EthenaS08TokenConfigLifecycle \
             -vvvv
 
       - name: Run P30.2 read-only diagnostic
@@ -114,9 +113,6 @@ jobs:
           set -euo pipefail
           forge test \
             --match-path test/P30_2_MintWETHReadOnlyDiagnostic.t.sol \
-            --skip P14FullMintProof \
-            --skip P29_MintWETHAccountingDiagnostic \
-            --skip EthenaS08TokenConfigLifecycle \
             -vvvv
 
       - name: Safety declaration
@@ -125,4 +121,5 @@ jobs:
         run: |
           echo "Mode: local fork diagnostics only."
           echo "Live execution remains prohibited."
-          echo "Passing tests do not establish a vulnerability."
+          echo "No live transaction is authorized."
+          echo "Passing tests alone do not prove a vulnerability."
