@@ -1,4 +1,5 @@
-// SPDX-License-Identifier: UNLICENSED
+
+ // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
@@ -139,48 +140,53 @@ contract EthenaS06CumulativeCapEnforcementTest is Test {
     }
 
     function _seedAuthorization() internal {
-        bytes32 member =
-            bytes32(uint256(uint160(MINTER)));
+        // EnumerableSet at slot 4:
+        // _indexes mapping at slot 4, _values array at slot 5.
 
         vm.store(
             MINTING,
-            bytes32(uint256(4)),
+            keccak256(abi.encode(MINTER, uint256(4))),
             bytes32(uint256(1))
         );
 
         vm.store(
             MINTING,
-            keccak256(abi.encode(uint256(4))),
-            member
+            bytes32(uint256(5)),
+            bytes32(uint256(1))
         );
 
         vm.store(
             MINTING,
-            keccak256(abi.encode(member, uint256(5))),
-            bytes32(uint256(1))
+            keccak256(abi.encode(uint256(5))),
+            bytes32(uint256(uint160(MINTER)))
         );
 
+        // Mapping(address => EnumerableSet.AddressSet) at slot 6.
         uint256 setBase =
             uint256(keccak256(abi.encode(MINTER, uint256(6))));
 
+        // Nested set: _indexes mapping at setBase,
+        // _values array at setBase + 1.
+
         vm.store(
             MINTING,
-            bytes32(setBase),
+            keccak256(abi.encode(MINTER, setBase)),
             bytes32(uint256(1))
         );
 
         vm.store(
             MINTING,
-            keccak256(abi.encode(setBase)),
-            member
+            bytes32(setBase + 1),
+            bytes32(uint256(1))
         );
 
         vm.store(
             MINTING,
-            keccak256(abi.encode(member, setBase + 1)),
-            bytes32(uint256(1))
+            keccak256(abi.encode(setBase + 1)),
+            bytes32(uint256(uint160(MINTER)))
         );
 
+        // AccessControl: MINTER_ROLE membership.
         bytes32 roleDataSlot =
             keccak256(abi.encode(MINTER_ROLE, uint256(0)));
 
@@ -551,7 +557,7 @@ contract EthenaS06CumulativeCapEnforcementTest is Test {
         );
     }
 
-    // Test 2: keep the asset counter at zero and isolate the global cap.
+    // Test 2: isolate the global cap while the asset counter stays at zero.
     function test_RejectsCumulativeMintAboveGlobalCap()
         external
     {
