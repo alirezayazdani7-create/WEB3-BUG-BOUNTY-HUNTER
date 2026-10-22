@@ -31,6 +31,10 @@ jobs:
     env:
       ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
       ETH_RPC_URL: ${{ secrets.ETHENA_FORK_RPC }}
+      RPC_URL: ${{ secrets.ETHENA_FORK_RPC }}
+      STAKED_USDE: ${{ secrets.STAKED_USDE }}
+      USDE: ${{ secrets.USDE }}
+      RESTRICTED_USER: ${{ secrets.RESTRICTED_USER }}
 
     steps:
       - name: Checkout repository
@@ -40,18 +44,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           if [ -z "${ETHENA_FORK_RPC:-}" ]; then
             echo "::error::ETHENA_FORK_RPC secret is missing."
             exit 1
           fi
-
-          if [ -z "${ETH_RPC_URL:-}" ]; then
-            echo "::error::ETH_RPC_URL alias is missing."
-            exit 1
-          fi
-
-          echo "RPC environment variables are configured."
+          echo "RPC configuration is present."
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
@@ -60,7 +57,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           cat > foundry.toml <<'TOML'
           [profile.default]
           src = "src"
@@ -72,54 +68,44 @@ jobs:
           optimizer = true
           optimizer_runs = 200
           TOML
-
           if [ ! -d lib/forge-std/src ]; then
             mkdir -p lib
             forge install foundry-rs/forge-std --no-git
           fi
-
           forge --version
 
       - name: Verify diagnostic files
         shell: bash
         run: |
           set -euo pipefail
-
           test -f test/P301_UnauthorizedRemovalProof.t.sol
           test -f test/EthenaAdminRoleDiagnostic.t.sol
           test -f test/P30_2_MintWETHReadOnlyDiagnostic.t.sol
-
-          echo "Required diagnostic files exist."
+          test -f test/EthenaRestrictedPendingUnstakeFork.t.sol
+          echo "All diagnostic files exist."
 
       - name: Run P301 access-control test
-        shell: bash
-        run: |
-          set -euo pipefail
-          forge test \
-            --match-path test/P301_UnauthorizedRemovalProof.t.sol \
-            -vvvv
+        run: forge test --match-path test/P301_UnauthorizedRemovalProof.t.sol -vvvv
 
       - name: Run admin role diagnostic
-        shell: bash
-        run: |
-          set -euo pipefail
-          forge test \
-            --match-path test/EthenaAdminRoleDiagnostic.t.sol \
-            -vvvv
+        run: forge test --match-path test/EthenaAdminRoleDiagnostic.t.sol -vvvv
 
       - name: Run P30.2 read-only diagnostic
-        shell: bash
+        run: forge test --match-path test/P30_2_MintWETHReadOnlyDiagnostic.t.sol -vvvv
+
+      - name: Run restricted pending unstake diagnostic
+        if: ${{ env.STAKED_USDE != '' && env.USDE != '' && env.RESTRICTED_USER != '' }}
+        run: forge test --match-path test/EthenaRestrictedPendingUnstakeFork.t.sol -vvvv
+
+      - name: Explain skipped diagnostic
+        if: ${{ env.STAKED_USDE == '' || env.USDE == '' || env.RESTRICTED_USER == '' }}
         run: |
-          set -euo pipefail
-          forge test \
-            --match-path test/P30_2_MintWETHReadOnlyDiagnostic.t.sol \
-            -vvvv
+          echo "::warning::Pending unstake diagnostic skipped: configure STAKED_USDE, USDE, and RESTRICTED_USER secrets."
 
       - name: Safety declaration
         if: always()
-        shell: bash
         run: |
-          echo "Mode: local fork diagnostics only."
+          echo "Mode: read-only fork diagnostics."
           echo "Live execution remains prohibited."
           echo "No live transaction is authorized."
           echo "Passing tests alone do not prove a vulnerability."
