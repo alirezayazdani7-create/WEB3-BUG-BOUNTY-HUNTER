@@ -1,6 +1,6 @@
 name: Ethena S06 Cumulative Cap Enforcement
 
-on:
+'on':
 push:
 paths:
 - "test/EthenaS06CumulativeCapEnforcement.t.sol"
