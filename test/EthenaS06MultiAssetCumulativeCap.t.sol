@@ -4,8 +4,15 @@ pragma solidity ^0.8.20;
 import "forge-std/Test.sol";
 
 interface IS06MultiAssetMint {
-    enum SignatureType { EIP712, EIP1271 }
-    enum OrderType { MINT, REDEEM }
+    enum SignatureType {
+        EIP712,
+        EIP1271
+    }
+
+    enum OrderType {
+        MINT,
+        REDEEM
+    }
 
     struct Order {
         string order_id;
@@ -30,46 +37,73 @@ interface IS06MultiAssetMint {
     }
 
     function tokenConfig(address)
-        external view returns (uint8, bool, uint128, uint128);
+        external
+        view
+        returns (uint8, bool, uint128, uint128);
 
     function globalConfig()
-        external view returns (uint128, uint128);
+        external
+        view
+        returns (uint128, uint128);
 
     function totalPerBlock(uint256)
-        external view returns (uint128, uint128);
+        external
+        view
+        returns (uint128, uint128);
 
     function totalPerBlockPerAsset(uint256, address)
-        external view returns (uint128, uint128);
+        external
+        view
+        returns (uint128, uint128);
 
     function hashOrder(Order calldata)
-        external view returns (bytes32);
+        external
+        view
+        returns (bytes32);
 
-    function verifyOrder(Order calldata, Signature calldata)
-        external view returns (bytes32);
+    function verifyOrder(
+        Order calldata,
+        Signature calldata
+    ) external view returns (bytes32);
 
     function verifyRoute(Route calldata)
-        external view returns (bool);
+        external
+        view
+        returns (bool);
 
     function verifyStablesLimit(
-        uint128, uint128, address, OrderType
+        uint128,
+        uint128,
+        address,
+        OrderType
     ) external view returns (bool);
 
-    function mint(Order calldata, Route calldata, Signature calldata)
-        external;
+    function mint(
+        Order calldata,
+        Route calldata,
+        Signature calldata
+    ) external;
 
     function isWhitelistedBenefactor(address)
-        external view returns (bool);
+        external
+        view
+        returns (bool);
 
     function isApprovedBeneficiary(address, address)
-        external view returns (bool);
+        external
+        view
+        returns (bool);
 
     function hasRole(bytes32, address)
-        external view returns (bool);
+        external
+        view
+        returns (bool);
 }
 
 interface IERC20MultiAssetTest {
     function approve(address spender, uint256 amount)
-        external returns (bool);
+        external
+        returns (bool);
 }
 
 contract EthenaS06MultiAssetCumulativeCapTest is Test {
@@ -100,7 +134,9 @@ contract EthenaS06MultiAssetCumulativeCapTest is Test {
         IS06MultiAssetMint(MINTING);
 
     function setUp() public {
-        vm.createSelectFork(vm.envString("ETHENA_FORK_RPC"));
+        vm.createSelectFork(
+            vm.envString("ETHENA_FORK_RPC")
+        );
     }
 
     function _seedAuthorization() internal {
@@ -168,9 +204,10 @@ contract EthenaS06MultiAssetCumulativeCapTest is Test {
         );
     }
 
-    function _seedAssetMinted(address asset, uint128 value)
-        internal
-    {
+    function _seedAssetMinted(
+        address asset,
+        uint128 value
+    ) internal {
         bytes32 outer =
             keccak256(abi.encode(block.number, uint256(14)));
 
@@ -184,7 +221,10 @@ contract EthenaS06MultiAssetCumulativeCapTest is Test {
         );
 
         (uint128 observed,) =
-            target.totalPerBlockPerAsset(block.number, asset);
+            target.totalPerBlockPerAsset(
+                block.number,
+                asset
+            );
 
         assertEq(
             observed,
@@ -213,8 +253,12 @@ contract EthenaS06MultiAssetCumulativeCapTest is Test {
         );
     }
 
-    function _order(address asset, uint128 nonce)
-        internal view
+    function _order(
+        address asset,
+        uint128 nonce
+    )
+        internal
+        view
         returns (IS06MultiAssetMint.Order memory)
     {
         return IS06MultiAssetMint.Order({
@@ -234,7 +278,8 @@ contract EthenaS06MultiAssetCumulativeCapTest is Test {
     }
 
     function _route()
-        internal pure
+        internal
+        pure
         returns (IS06MultiAssetMint.Route memory route)
     {
         address[] memory addresses = new address[](1);
@@ -249,7 +294,9 @@ contract EthenaS06MultiAssetCumulativeCapTest is Test {
         });
     }
 
-    function _sign(IS06MultiAssetMint.Order memory order)
+    function _sign(
+        IS06MultiAssetMint.Order memory order
+    )
         internal
         returns (IS06MultiAssetMint.Signature memory sig)
     {
@@ -271,7 +318,10 @@ contract EthenaS06MultiAssetCumulativeCapTest is Test {
         );
     }
 
-    function _attemptMint(address asset, uint128 nonce)
+    function _attemptMint(
+        address asset,
+        uint128 nonce
+    )
         internal
         returns (bool success, bytes memory data)
     {
@@ -310,9 +360,9 @@ contract EthenaS06MultiAssetCumulativeCapTest is Test {
         );
     }
 
-    function _assertGlobalCapError(bytes memory data)
-        internal pure
-    {
+    function _assertGlobalCapError(
+        bytes memory data
+    ) internal pure {
         assertGe(
             data.length,
             4,
@@ -337,34 +387,63 @@ contract EthenaS06MultiAssetCumulativeCapTest is Test {
         );
     }
 
+    function _approveUSDC() internal {
+        vm.prank(MINTER);
+
+        (bool ok, bytes memory data) = USDC.call(
+            abi.encodeWithSelector(
+                IERC20MultiAssetTest.approve.selector,
+                MINTING,
+                type(uint256).max
+            )
+        );
+
+        require(ok, "USDC approve call reverted");
+
+        require(
+            data.length == 0 ||
+                (
+                    data.length >= 32 &&
+                    abi.decode(data, (bool))
+                ),
+            "USDC approval returned false"
+        );
+    }
+
+    function _approveUSDT() internal {
+        vm.prank(MINTER);
+
+        (bool ok, bytes memory data) = USDT.call(
+            abi.encodeWithSelector(
+                IERC20MultiAssetTest.approve.selector,
+                MINTING,
+                type(uint256).max
+            )
+        );
+
+        require(ok, "USDT approve call reverted");
+
+        require(
+            data.length == 0 ||
+                (
+                    data.length >= 32 &&
+                    abi.decode(data, (bool))
+                ),
+            "USDT approval returned false"
+        );
+    }
+
     function test_GlobalMintCapIsSharedAcrossUSDCAndUSDT()
         external
     {
         _seedAuthorization();
 
-        // Test-only balances on the local fork.
+        // Test-only token balances on the local fork.
         deal(USDC, MINTER, 10_000_000);
         deal(USDT, MINTER, 10_000_000);
 
-        vm.startPrank(MINTER);
-
-        require(
-            IERC20MultiAssetTest(USDC).approve(
-                MINTING,
-                type(uint256).max
-            ),
-            "USDC approval failed"
-        );
-
-        require(
-            IERC20MultiAssetTest(USDT).approve(
-                MINTING,
-                type(uint256).max
-            ),
-            "USDT approval failed"
-        );
-
-        vm.stopPrank();
+        _approveUSDC();
+        _approveUSDT();
 
         (, bool usdcActive, uint128 usdcCap,) =
             target.tokenConfig(USDC);
@@ -399,7 +478,7 @@ contract EthenaS06MultiAssetCumulativeCapTest is Test {
         _seedAssetMinted(USDT, 0);
         _seedGlobalMinted(globalCap - UNIT);
 
-        // First local-fork mint reaches the global cap.
+        // First local-fork mint attempts to reach the global cap.
         (bool firstOk, bytes memory firstData) =
             _attemptMint(USDC, 906201);
 
@@ -448,7 +527,7 @@ contract EthenaS06MultiAssetCumulativeCapTest is Test {
             "USDT counter changed before its mint"
         );
 
-        // Second mint must fail because the shared global cap is full.
+        // Second mint must fail if the global cap is shared.
         (bool secondOk, bytes memory secondData) =
             _attemptMint(USDT, 906202);
 
