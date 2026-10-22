@@ -1,0 +1,61 @@
+name: Ethena Pending Unstake Read-Only Diagnostics
+
+"on":
+workflow_dispatch:
+
+permissions:
+contents: read
+
+jobs:
+read-only-diagnostics:
+runs-on: ubuntu-latest
+timeout-minutes: 5
+steps:
+- name: Checkout repository
+uses: actions/checkout@v4
+
+  - name: Install Foundry
+    uses: foundry-rs/foundry-toolchain@v1
+
+  - name: Inspect deployed sUSDe state (read-only)
+    shell: bash
+    env:
+      ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
+    run: |
+      set -euo pipefail
+      if [ -z "${ETH_RPC_URL:-}" ]; then
+        echo "::error::Missing ETH_RPC_URL repository secret."
+        exit 1
+      fi
+
+      SUSDE="0x9D39A5DE30e57443BfF2A8307A4256c8797A3497"
+      HOLDER="0xA469b399df1c7b4bd8569048d889f131329dffa1"
+      MANAGER="0x3B0AAf6e6fCd4a7cEEf8c92C32DFeA9E64dC1862"
+
+      echo "MODE=READ_ONLY"
+      echo "MAINNET_TRANSACTIONS=NONE"
+
+      CODE="$(cast code "$SUSDE" --rpc-url "$ETH_RPC_URL")"
+      if [ "$CODE" = "0x" ]; then
+        echo "::error::No contract code at the configured sUSDe address."
+        exit 1
+      fi
+      echo "CONTRACT_CODE_PRESENT=YES"
+
+      COOLDOWN="$(cast call "$SUSDE" "cooldownDuration()(uint24)" --rpc-url "$ETH_RPC_URL")"
+      SILO="$(cast call "$SUSDE" "silo()(address)" --rpc-url "$ETH_RPC_URL")"
+      FULL_ROLE="$(cast call "$SUSDE" "FULL_RESTRICTED_STAKER_ROLE()(bytes32)" --rpc-url "$ETH_RPC_URL")"
+      ADMIN_ROLE="$(cast call "$SUSDE" "DEFAULT_ADMIN_ROLE()(bytes32)" --rpc-url "$ETH_RPC_URL")"
+
+      echo "COOLDOWN_DURATION=$COOLDOWN"
+      echo "SILO_ADDRESS=$SILO"
+      echo "FULL_RESTRICTED_ROLE=$FULL_ROLE"
+      echo "DEFAULT_ADMIN_ROLE=$ADMIN_ROLE"
+
+      HOLDER_RESTRICTED="$(cast call "$SUSDE" "hasRole(bytes32,address)(bool)" "$FULL_ROLE" "$HOLDER" --rpc-url "$ETH_RPC_URL")"
+      MANAGER_ADMIN="$(cast call "$SUSDE" "hasRole(bytes32,address)(bool)" "$ADMIN_ROLE" "$MANAGER" --rpc-url "$ETH_RPC_URL")"
+
+      echo "CANDIDATE_HOLDER_FULL_RESTRICTED=$HOLDER_RESTRICTED"
+      echo "CANDIDATE_MANAGER_DEFAULT_ADMIN=$MANAGER_ADMIN"
+      echo "FORK_EXPLOIT_TEST=NOT_RUN"
+      echo "NOTE=Read-only calls only; no transactions or storage writes.
