@@ -77,36 +77,73 @@ contract EthenaS06SequentialMintCapTest is Test {
     function _seedAuthorization() internal {
         bytes32 member = bytes32(uint256(uint160(MINTER)));
 
-        vm.store(MINTING, bytes32(uint256(4)), bytes32(uint256(1)));
-        vm.store(MINTING, keccak256(abi.encode(uint256(4))), member);
+        // EnumerableSet at slot 4:
+        // _values array at slot 4, _indexes mapping at slot 5.
+        vm.store(
+            MINTING,
+            bytes32(uint256(4)),
+            bytes32(uint256(1))
+        );
+
+        vm.store(
+            MINTING,
+            keccak256(abi.encode(uint256(4))),
+            member
+        );
+
         vm.store(
             MINTING,
             keccak256(abi.encode(member, uint256(5))),
             bytes32(uint256(1))
         );
 
-        uint256 setBase = uint256(keccak256(abi.encode(MINTER, uint256(6))));
-        vm.store(MINTING, bytes32(setBase), bytes32(uint256(1)));
-        vm.store(MINTING, keccak256(abi.encode(setBase)), member);
+        // Mapping(address => EnumerableSet.AddressSet) at slot 6.
+        uint256 setBase =
+            uint256(keccak256(abi.encode(MINTER, uint256(6))));
+
+        // Nested set: values array at setBase, indexes mapping at setBase + 1.
+        vm.store(
+            MINTING,
+            bytes32(setBase),
+            bytes32(uint256(1))
+        );
+
+        vm.store(
+            MINTING,
+            keccak256(abi.encode(setBase)),
+            member
+        );
+
         vm.store(
             MINTING,
             keccak256(abi.encode(member, setBase + 1)),
             bytes32(uint256(1))
         );
 
-        bytes32 roleDataSlot = keccak256(abi.encode(MINTER_ROLE, uint256(0)));
+        // AccessControl: MINTER_ROLE membership.
+        bytes32 roleDataSlot =
+            keccak256(abi.encode(MINTER_ROLE, uint256(0)));
+
         vm.store(
             MINTING,
             keccak256(abi.encode(MINTER, roleDataSlot)),
             bytes32(uint256(1))
         );
 
-        assertTrue(target.isWhitelistedBenefactor(MINTER), "whitelist setup failed");
+        assertTrue(
+            target.isWhitelistedBenefactor(MINTER),
+            "whitelist setup failed"
+        );
+
         assertTrue(
             target.isApprovedBeneficiary(MINTER, MINTER),
             "beneficiary approval setup failed"
         );
-        assertTrue(target.hasRole(MINTER_ROLE, MINTER), "MINTER_ROLE setup failed");
+
+        assertTrue(
+            target.hasRole(MINTER_ROLE, MINTER),
+            "MINTER_ROLE setup failed"
+        );
     }
 
     function _seedAssetMinted(uint128 value) internal {
