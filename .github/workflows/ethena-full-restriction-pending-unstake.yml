@@ -1,57 +1,56 @@
 name: Ethena FULL Restriction Pending Unstake Lab
 
 "on":
-workflow_dispatch:
+  workflow_dispatch:
 
 permissions:
-contents: read
+  contents: read
 
 jobs:
-validate-workflow:
-name: Validate workflow syntax and safety
-runs-on: ubuntu-latest
-timeout-minutes: 2
-steps:
-- name: Check required configuration
-shell: bash
-run: |
-set -euo pipefail
-echo "YAML_WORKFLOW_LOADED=YES"
-echo "EXECUTION_MODE=LOCAL_FORK_ONLY"
-echo "MAINNET_TRANSACTIONS=NONE"
-echo "LIVE_EXECUTION=PROHIBITED"
-echo "SECURITY_FINDING=NOT_CONFIRMED"
-echo "This job validates the workflow only."
-echo "It does not claim that the contract is vulnerable."
+  validate-workflow:
+    name: Validate workflow syntax and safety
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check required configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "YAML_WORKFLOW_LOADED=YES"
+          echo "EXECUTION_MODE=LOCAL_FORK_ONLY"
+          echo "MAINNET_TRANSACTIONS=NONE"
+          echo "LIVE_EXECUTION=PROHIBITED"
+          echo "SECURITY_FINDING=NOT_CONFIRMED"
+          echo "This job validates workflow structure only."
+          echo "It does not claim that the contract is vulnerable."
 
-pending-unstake:
-name: Fork test prerequisites
-runs-on: ubuntu-latest
-needs: validate-workflow
-timeout-minutes: 10
-steps:
-- name: Install Foundry
-uses: foundry-rs/foundry-toolchain@v1
+  pending-unstake:
+    name: Fork test prerequisites
+    runs-on: ubuntu-latest
+    needs: validate-workflow
+    timeout-minutes: 10
+    steps:
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
 
-  - name: Check RPC secret
-    shell: bash
-    env:
-      ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
-    run: |
-      set -euo pipefail
-      if [ -z "${ETH_RPC_URL:-}" ]; then
-        echo "::error::Missing ETH_RPC_URL repository secret."
-        exit 1
-      fi
+      - name: Check RPC secret
+        shell: bash
+        env:
+          ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ETH_RPC_URL:-}" ]; then
+            echo "::error::Missing ETH_RPC_URL repository secret."
+            exit 1
+          fi
+          echo "RPC_SECRET_PRESENT=YES"
+          echo "No mainnet transaction will be sent."
 
-      echo "RPC_SECRET_PRESENT=YES"
-      echo "No mainnet transaction will be sent."
-
-  - name: Report safe next step
-    shell: bash
-    run: |
-      set -euo pipefail
-      echo "WORKFLOW_SCHEMA=VALID"
-      echo "FORK_EXPLOIT_TEST=NOT_RUN"
-      echo "REASON=Contract state and role assumptions require verification."
-      echo "BOUNTY_CLAIM=NOT_ASSERTED"
+      - name: Report safe next step
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "WORKFLOW_SCHEMA=VALID"
+          echo "FORK_EXPLOIT_TEST=NOT_RUN"
+          echo "REASON=Contract state and role assumptions require verification."
+          echo "BOUNTY_CLAIM=NOT_ASSERTED"
