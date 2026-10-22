@@ -1,4 +1,4 @@
-name: Ethena S06 Cumulative Cap + Multi-Asset Probe
+name: Ethena S06 Cumulative Cap + Multi-Asset Tests
 
 on:
   workflow_dispatch:
@@ -8,6 +8,7 @@ on:
     paths:
       - 'test/EthenaS06CumulativeCapEnforcement.t.sol'
       - 'test/EthenaS06MultiAssetProbe.t.sol'
+      - 'test/EthenaS06MultiAssetCumulativeCap.t.sol'
       - '.github/workflows/ethena-s06-cumulative-cap-enforcement.yml'
 
 permissions:
@@ -29,12 +30,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           if [ -z "${ETHENA_FORK_RPC:-}" ]; then
             echo "::error::ETHENA_FORK_RPC secret is missing"
             exit 1
           fi
-
           echo "RPC secret is configured."
 
       - name: Install Foundry
@@ -50,17 +49,12 @@ jobs:
           cd /tmp/s06-cumulative
 
           forge init --force .
-
           rm -rf test
           mkdir -p test
 
-          cp \
-            "$GITHUB_WORKSPACE/test/EthenaS06CumulativeCapEnforcement.t.sol" \
-            test/
-
-          cp \
-            "$GITHUB_WORKSPACE/test/EthenaS06MultiAssetProbe.t.sol" \
-            test/
+          cp "$GITHUB_WORKSPACE/test/EthenaS06CumulativeCapEnforcement.t.sol" test/
+          cp "$GITHUB_WORKSPACE/test/EthenaS06MultiAssetProbe.t.sol" test/
+          cp "$GITHUB_WORKSPACE/test/EthenaS06MultiAssetCumulativeCap.t.sol" test/
 
           forge install foundry-rs/forge-std --no-commit
 
@@ -69,27 +63,33 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           echo "MODE=LOCAL_FORK_ONLY"
           echo "MAINNET_TRANSACTIONS=NONE"
 
           forge test \
             --match-contract EthenaS06CumulativeCapEnforcementTest \
-            --via-ir \
-            --optimize \
-            -vvv
+            --via-ir --optimize -vvv
 
       - name: Run read-only multi-asset probe
         working-directory: /tmp/s06-cumulative
         shell: bash
         run: |
           set -euo pipefail
-
           echo "MODE=READ_ONLY_LOCAL_FORK"
           echo "MAINNET_TRANSACTIONS=NONE"
 
           forge test \
             --match-contract EthenaS06MultiAssetProbeTest \
-            --via-ir \
-            --optimize \
-            -vvv
+            --via-ir --optimize -vvv
+
+      - name: Run cross-asset global cap test
+        working-directory: /tmp/s06-cumulative
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "MODE=LOCAL_FORK_ONLY"
+          echo "MAINNET_TRANSACTIONS=NONE"
+
+          forge test \
+            --match-contract EthenaS06MultiAssetCumulativeCapTest \
+            --via-ir --optimize -vvv
