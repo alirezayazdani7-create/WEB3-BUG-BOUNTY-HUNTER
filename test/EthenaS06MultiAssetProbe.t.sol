@@ -1,5 +1,4 @@
-
- // SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
@@ -31,10 +30,7 @@ interface IEthenaS06MultiAssetProbe {
     function totalPerBlockPerAsset(
         uint256 blockNumber,
         address asset
-    )
-        external
-        view
-        returns (uint128 minted, uint128 redeemed);
+    ) external view returns (uint128 minted, uint128 redeemed);
 }
 
 contract EthenaS06MultiAssetProbeTest is Test {
@@ -54,13 +50,15 @@ contract EthenaS06MultiAssetProbeTest is Test {
         vm.createSelectFork(vm.envString("ETHENA_FORK_RPC"));
     }
 
-    function test_ReadTwoAssetMintConfigurations() external view {
+    function test_ReadTwoAssetMintConfigurations() external {
         assertGt(MINTING.code.length, 0, "Minting contract missing");
         assertGt(USDC.code.length, 0, "USDC contract missing");
         assertGt(USDT.code.length, 0, "USDT contract missing");
 
-        (uint128 globalMintCap, uint128 globalRedeemCap) =
-            target.globalConfig();
+        (
+            uint128 globalMintCap,
+            uint128 globalRedeemCap
+        ) = target.globalConfig();
 
         (
             uint8 usdcType,
