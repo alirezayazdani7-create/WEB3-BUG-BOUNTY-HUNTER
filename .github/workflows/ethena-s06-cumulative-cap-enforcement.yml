@@ -1,104 +1,104 @@
 name: Ethena S06 Cumulative Cap Enforcement
 
 'on':
-push:
-paths:
-- "test/EthenaS06CumulativeCapEnforcement.t.sol"
-- "test/EthenaS06MultiAssetProbe.t.sol"
-- "test/EthenaS06MultiAssetCumulativeCap.t.sol"
-- "test/EthenaS06RedeemCapProbe.t.sol"
-- "test/EthenaS06RedeemGlobalCapEnforcement.t.sol"
-- ".github/workflows/ethena-s06-cumulative-cap-enforcement.yml"
-pull_request:
-paths:
-- "test/EthenaS06CumulativeCapEnforcement.t.sol"
-- "test/EthenaS06MultiAssetProbe.t.sol"
-- "test/EthenaS06MultiAssetCumulativeCap.t.sol"
-- "test/EthenaS06RedeemCapProbe.t.sol"
-- "test/EthenaS06RedeemGlobalCapEnforcement.t.sol"
-- ".github/workflows/ethena-s06-cumulative-cap-enforcement.yml"
-workflow_dispatch:
+  push:
+    paths:
+      - 'test/EthenaS06CumulativeCapEnforcement.t.sol'
+      - 'test/EthenaS06MultiAssetProbe.t.sol'
+      - 'test/EthenaS06MultiAssetCumulativeCap.t.sol'
+      - 'test/EthenaS06RedeemCapProbe.t.sol'
+      - 'test/EthenaS06RedeemGlobalCapEnforcement.t.sol'
+      - '.github/workflows/ethena-s06-cumulative-cap-enforcement.yml'
+  pull_request:
+    paths:
+      - 'test/EthenaS06CumulativeCapEnforcement.t.sol'
+      - 'test/EthenaS06MultiAssetProbe.t.sol'
+      - 'test/EthenaS06MultiAssetCumulativeCap.t.sol'
+      - 'test/EthenaS06RedeemCapProbe.t.sol'
+      - 'test/EthenaS06RedeemGlobalCapEnforcement.t.sol'
+      - '.github/workflows/ethena-s06-cumulative-cap-enforcement.yml'
+  workflow_dispatch:
 
 permissions:
-contents: read
+  contents: read
 
 concurrency:
-group: ethena-s06-cumulative-${{ github.ref }}
-cancel-in-progress: true
+  group: ethena-s06-cumulative-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-local-fork-tests:
-name: Local Fork Tests
-runs-on: ubuntu-latest
-timeout-minutes: 20
-env:
-ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
-steps:
-- name: Checkout repository
-uses: actions/checkout@v4
+  local-fork-tests:
+    name: Local Fork Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-  - name: Install Foundry
-    uses: foundry-rs/foundry-toolchain@v1
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
 
-  - name: Validate required secret
-    shell: bash
-    run: |
-      set -euo pipefail
-      if [ -z "${ETHENA_FORK_RPC:-}" ]; then
-        echo "::error::ETHENA_FORK_RPC secret is missing."
-        exit 1
-      fi
-      echo "RPC_SECRET_CONFIGURED=yes"
-      echo "MODE=LOCAL_FORK_ONLY"
-      echo "LIVE_TRANSACTIONS=NONE"
+      - name: Validate required secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${ETHENA_FORK_RPC:-}" ]; then
+            echo "::error::ETHENA_FORK_RPC secret is missing."
+            exit 1
+          fi
+          echo "RPC_SECRET_CONFIGURED=yes"
+          echo "MODE=LOCAL_FORK_ONLY"
+          echo "LIVE_TRANSACTIONS=NONE"
 
-  - name: Prepare isolated Foundry project
-    shell: bash
-    run: |
-      set -euo pipefail
-      mkdir -p /tmp/s06-cumulative/test
-      cd /tmp/s06-cumulative
-      forge init --force --no-git .
-      forge install foundry-rs/forge-std --no-git
-      cp "$GITHUB_WORKSPACE/test/EthenaS06CumulativeCapEnforcement.t.sol" test/
-      cp "$GITHUB_WORKSPACE/test/EthenaS06MultiAssetProbe.t.sol" test/
-      cp "$GITHUB_WORKSPACE/test/EthenaS06MultiAssetCumulativeCap.t.sol" test/
-      cp "$GITHUB_WORKSPACE/test/EthenaS06RedeemCapProbe.t.sol" test/
-      cp "$GITHUB_WORKSPACE/test/EthenaS06RedeemGlobalCapEnforcement.t.sol" test/
+      - name: Prepare isolated Foundry project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/s06-cumulative/test
+          cd /tmp/s06-cumulative
+          forge init --force --no-git .
+          forge install foundry-rs/forge-std --no-git
+          cp "$GITHUB_WORKSPACE/test/EthenaS06CumulativeCapEnforcement.t.sol" test/
+          cp "$GITHUB_WORKSPACE/test/EthenaS06MultiAssetProbe.t.sol" test/
+          cp "$GITHUB_WORKSPACE/test/EthenaS06MultiAssetCumulativeCap.t.sol" test/
+          cp "$GITHUB_WORKSPACE/test/EthenaS06RedeemCapProbe.t.sol" test/
+          cp "$GITHUB_WORKSPACE/test/EthenaS06RedeemGlobalCapEnforcement.t.sol" test/
 
-  - name: Run cumulative mint cap tests
-    working-directory: /tmp/s06-cumulative
-    shell: bash
-    run: |
-      set -euo pipefail
-      forge test --match-contract EthenaS06CumulativeCapEnforcementTest --via-ir --optimize -vvv
+      - name: Run cumulative mint cap tests
+        working-directory: /tmp/s06-cumulative
+        shell: bash
+        run: |
+          set -euo pipefail
+          forge test --match-contract EthenaS06CumulativeCapEnforcementTest --via-ir --optimize -vvv
 
-  - name: Run multi-asset probe
-    working-directory: /tmp/s06-cumulative
-    shell: bash
-    run: |
-      set -euo pipefail
-      forge test --match-contract EthenaS06MultiAssetProbeTest --via-ir --optimize -vvv
+      - name: Run multi-asset probe
+        working-directory: /tmp/s06-cumulative
+        shell: bash
+        run: |
+          set -euo pipefail
+          forge test --match-contract EthenaS06MultiAssetProbeTest --via-ir --optimize -vvv
 
-  - name: Run multi-asset cumulative cap test
-    working-directory: /tmp/s06-cumulative
-    shell: bash
-    run: |
-      set -euo pipefail
-      forge test --match-contract EthenaS06MultiAssetCumulativeCapTest --via-ir --optimize -vvv
+      - name: Run multi-asset cumulative cap test
+        working-directory: /tmp/s06-cumulative
+        shell: bash
+        run: |
+          set -euo pipefail
+          forge test --match-contract EthenaS06MultiAssetCumulativeCapTest --via-ir --optimize -vvv
 
-  - name: Run redemption cap probe
-    working-directory: /tmp/s06-cumulative
-    shell: bash
-    run: |
-      set -euo pipefail
-      forge test --match-contract EthenaS06RedeemCapProbeTest --via-ir --optimize -vvv
+      - name: Run redemption cap probe
+        working-directory: /tmp/s06-cumulative
+        shell: bash
+        run: |
+          set -euo pipefail
+          forge test --match-contract EthenaS06RedeemCapProbeTest --via-ir --optimize -vvv
 
-  - name: Run global redemption cap enforcement test
-    working-directory: /tmp/s06-cumulative
-    shell: bash
-    run: |
-      set -euo pipefail
-      echo "MODE=LOCAL_FORK_ONLY"
-      echo "MAINNET_TRANSACTIONS=NONE"
-      forge test --match-contract EthenaS06RedeemGlobalCapEnforcementTest --via-ir --optimize -vvv
+      - name: Run global redemption cap enforcement test
+        working-directory: /tmp/s06-cumulative
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "MODE=LOCAL_FORK_ONLY"
+          echo "MAINNET_TRANSACTIONS=NONE"
+          forge test --match-contract EthenaS06RedeemGlobalCapEnforcementTest --via-ir --optimize -vvv
