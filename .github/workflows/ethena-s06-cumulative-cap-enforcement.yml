@@ -33,10 +33,9 @@ runs-on: ubuntu-latest
 timeout-minutes: 20
 env:
 ETHENA_FORK_RPC: ${{ secrets.ETHENA_FORK_RPC }}
-
 steps:
-  - name: Checkout repository
-    uses: actions/checkout@v4
+- name: Checkout repository
+uses: actions/checkout@v4
 
   - name: Install Foundry
     uses: foundry-rs/foundry-toolchain@v1
@@ -61,7 +60,6 @@ steps:
       cd /tmp/s06-cumulative
       forge init --force --no-git .
       forge install foundry-rs/forge-std --no-git
-
       cp "$GITHUB_WORKSPACE/test/EthenaS06CumulativeCapEnforcement.t.sol" test/
       cp "$GITHUB_WORKSPACE/test/EthenaS06MultiAssetProbe.t.sol" test/
       cp "$GITHUB_WORKSPACE/test/EthenaS06MultiAssetCumulativeCap.t.sol" test/
