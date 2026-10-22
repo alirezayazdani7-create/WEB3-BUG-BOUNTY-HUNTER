@@ -1,200 +1,205 @@
 name: Ethena FULL Restriction Pending Unstake Lab
 
 on:
-  workflow_dispatch:
+workflow_dispatch:
 
 permissions:
-  contents: read
+contents: read
 
 jobs:
-  pending-unstake:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+pending-unstake:
+runs-on: ubuntu-latest
+timeout-minutes: 10
 
-    steps:
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
+steps:
+  - name: Checkout repository
+    uses: actions/checkout@v4
 
-      - name: Start isolated mainnet fork
-        env:
-          ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
-        run: |
-          set -euo pipefail
-          test -n "$ETH_RPC_URL"
+  - name: Install Foundry
+    uses: foundry-rs/foundry-toolchain@v1
 
-          anvil --fork-url "$ETH_RPC_URL" \
-            --host 127.0.0.1 \
-            --port 8545 \
-            --chain-id 31337 \
-            --accounts 2 > anvil.log 2>&1 &
+  - name: Start isolated mainnet fork
+    shell: bash
+    env:
+      ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
+    run: |
+      set -euo pipefail
+      test -n "${ETH_RPC_URL:-}" || {
+        echo "::error::Missing ETH_RPC_URL secret"
+        exit 1
+      }
 
-          echo $! > anvil.pid
-          RPC="http://127.0.0.1:8545"
+      anvil --fork-url "$ETH_RPC_URL" \
+        --host 127.0.0.1 \
+        --port 8545 \
+        --chain-id 31337 \
+        --accounts 2 > anvil.log 2>&1 &
 
-          for i in $(seq 1 30); do
-            cast chain-id --rpc-url "$RPC" >/dev/null 2>&1 && break
-            sleep 1
-          done
+      echo $! > anvil.pid
+      RPC="http://127.0.0.1:8545"
 
-          test "$(cast chain-id --rpc-url "$RPC")" = "31337"
-          test "$(cast chain-id --rpc-url "$ETH_RPC_URL")" = "1"
+      READY=0
+      for i in $(seq 1 30); do
+        if cast chain-id --rpc-url "$RPC" >/dev/null 2>&1; then
+          READY=1
+          break
+        fi
+        sleep 1
+      done
 
-          echo "EXECUTION_MODE=LOCAL_FORK_ONLY"
-          echo "FORK_BLOCK=$(cast block-number --rpc-url "$RPC")"
-          echo "MAINNET_TRANSACTIONS=NONE"
+      test "$READY" = "1"
+      test "$(cast chain-id --rpc-url "$RPC")" = "31337"
+      test "$(cast chain-id --rpc-url "$ETH_RPC_URL")" = "1"
 
-      - name: Test FULL restriction against a pending cooldown
-        timeout-minutes: 7
-        run: |
-          set -euo pipefail
+      echo "EXECUTION_MODE=LOCAL_FORK_ONLY"
+      echo "FORK_BLOCK=$(cast block-number --rpc-url "$RPC")"
+      echo "MAINNET_TRANSACTIONS=NONE"
 
-          RPC="http://127.0.0.1:8545"
-          SUSDE="0x9D39A5DE30e57443BfF2A8307A4256c8797A3497"
-          USDE="0x4c9EDD5852cd905f086C759E8383e09bff1E68B3"
-          HOLDER="0xA469b399df1c7b4bd8569048d889f131329dffa1"
-          RECEIVER="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
-          BLACKLIST_MANAGER="0x3B0AAf6e6fCd4a7cEEf8c92C32DFeA9E64dC1862"
+  - name: Test pending unstake after full restriction
+    shell: bash
+    timeout-minutes: 7
+    run: |
+      set -euo pipefail
 
-          rpc() {
-            cast rpc "$@" --rpc-url "$RPC"
-          }
+      RPC="http://127.0.0.1:8545"
+      SUSDE="0x9D39A5DE30e57443BfF2A8307A4256c8797A3497"
+      USDE="0x4c9EDD5852cd905f086C759E8383e09bff1E68B3"
+      HOLDER="0xA469b399df1c7b4bd8569048d889f131329dffa1"
+      RECEIVER="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+      BLACKLIST_MANAGER="0x3B0AAf6e6fCd4a7cEEf8c92C32DFeA9E64dC1862"
 
-          impersonate() {
-            rpc anvil_impersonateAccount "$1" >/dev/null
-            rpc anvil_setBalance "$1" \
-              0x3635C9ADC5DEA000000000000000000000 >/dev/null
-          }
+      rpc() {
+        cast rpc "$@" --rpc-url "$RPC"
+      }
 
-          tx() {
-            local from="$1" to="$2" sig="$3"
-            shift 3
-            timeout 45s cast send \
-              --unlocked --from "$from" "$to" "$sig" "$@" \
-              --rpc-url "$RPC" >/tmp/cast.out 2>/tmp/cast.err
-          }
+      impersonate() {
+        rpc anvil_impersonateAccount "$1" >/dev/null
+        rpc anvil_setBalance "$1" \
+          0x3635C9ADC5DEA000000000000000000000 >/dev/null
+      }
 
-          usde_bal() {
-            cast call "$USDE" "balanceOf(address)(uint256)" "$1" \
-              --rpc-url "$RPC" | awk 'NR==1 {print $1}'
-          }
+      tx() {
+        local from="$1" to="$2" sig="$3"
+        shift 3
+        timeout 45s cast send \
+          --unlocked --from "$from" "$to" "$sig" "$@" \
+          --rpc-url "$RPC" >/tmp/cast.out 2>/tmp/cast.err
+      }
 
-          susde_bal() {
-            cast call "$SUSDE" "balanceOf(address)(uint256)" "$1" \
-              --rpc-url "$RPC" | awk 'NR==1 {print $1}'
-          }
+      balance() {
+        cast call "$USDE" "balanceOf(address)(uint256)" "$1" \
+          --rpc-url "$RPC" | awk 'NR==1 {print $1}'
+      }
 
-          silo_addr() {
-            cast call "$SUSDE" "silo()(address)" --rpc-url "$RPC"
-          }
+      susde_balance() {
+        cast call "$SUSDE" "balanceOf(address)(uint256)" "$1" \
+          --rpc-url "$RPC" | awk 'NR==1 {print $1}'
+      }
 
-          pending_amount() {
-            cast call "$SUSDE" \
-              "cooldowns(address)(uint104,uint152)" "$1" \
-              --rpc-url "$RPC" | awk 'NR==2 {print $1}'
-          }
+      pending_amount() {
+        cast call "$SUSDE" \
+          "cooldowns(address)(uint104,uint152)" "$1" \
+          --rpc-url "$RPC" | awk 'NR==2 {print $1}'
+      }
 
-          pending_end() {
-            cast call "$SUSDE" \
-              "cooldowns(address)(uint104,uint152)" "$1" \
-              --rpc-url "$RPC" | awk 'NR==1 {print $1}'
-          }
+      lower() {
+        tr '[:upper:]' '[:lower:]'
+      }
 
-          lower() {
-            tr '[:upper:]' '[:lower:]'
-          }
+      ADMIN="$(cast call "$SUSDE" "owner()(address)" \
+        --rpc-url "$RPC" | lower)"
+      FULL_ROLE="$(cast keccak "FULL_RESTRICTED_STAKER_ROLE")"
+      BLACKLIST_ROLE="$(cast keccak "BLACKLIST_MANAGER_ROLE")"
+      DURATION="$(cast call "$SUSDE" "cooldownDuration()(uint24)" \
+        --rpc-url "$RPC" | awk 'NR==1 {print $1}')"
 
-          ADMIN="$(cast call "$SUSDE" "owner()(address)" \
-            --rpc-url "$RPC" | lower)"
-          FULL_ROLE="$(cast keccak "FULL_RESTRICTED_STAKER_ROLE")"
-          BLACKLIST_ROLE="$(cast keccak "BLACKLIST_MANAGER_ROLE")"
-          DURATION="$(cast call "$SUSDE" "cooldownDuration()(uint24)" \
-            --rpc-url "$RPC" | awk 'NR==1 {print $1}')"
+      impersonate "$HOLDER"
+      impersonate "$RECEIVER"
+      impersonate "$ADMIN"
+      impersonate "$BLACKLIST_MANAGER"
 
-          impersonate "$HOLDER"
-          impersonate "$RECEIVER"
-          impersonate "$ADMIN"
-          impersonate "$BLACKLIST_MANAGER"
+      ADMIN_ROLE="$(cast call "$SUSDE" \
+        "DEFAULT_ADMIN_ROLE()(bytes32)" --rpc-url "$RPC")"
 
-          ADMIN_ROLE="$(cast call "$SUSDE" \
-            "DEFAULT_ADMIN_ROLE()(bytes32)" --rpc-url "$RPC")"
+      ADMIN_OK="$(cast call "$SUSDE" \
+        "hasRole(bytes32,address)(bool)" "$ADMIN_ROLE" "$ADMIN" \
+        --rpc-url "$RPC")"
 
-          ADMIN_OK="$(cast call "$SUSDE" \
-            "hasRole(bytes32,address)(bool)" "$ADMIN_ROLE" "$ADMIN" \
-            --rpc-url "$RPC")"
+      MANAGER_OK="$(cast call "$SUSDE" \
+        "hasRole(bytes32,address)(bool)" "$BLACKLIST_ROLE" \
+        "$BLACKLIST_MANAGER" --rpc-url "$RPC")"
 
-          MANAGER_OK="$(cast call "$SUSDE" \
-            "hasRole(bytes32,address)(bool)" "$BLACKLIST_ROLE" \
-            "$BLACKLIST_MANAGER" --rpc-url "$RPC")"
+      echo "ADMIN_ROLE_OK=$ADMIN_OK"
+      echo "BLACKLIST_MANAGER_ROLE_OK=$MANAGER_OK"
+      echo "LIVE_COOLDOWN_DURATION=$DURATION"
 
-          echo "ADMIN_ROLE_OK=$ADMIN_OK"
-          echo "BLACKLIST_MANAGER_ROLE_OK=$MANAGER_OK"
-          echo "LIVE_COOLDOWN_DURATION=$DURATION"
+      test "$ADMIN_OK" = "true"
+      test "$MANAGER_OK" = "true"
+      test "$DURATION" -gt 0
 
-          test "$ADMIN_OK" = "true"
-          test "$MANAGER_OK" = "true"
-          test "$DURATION" -gt 0
+      SNAP="$(rpc evm_snapshot | tr -d '"' | tail -n 1)"
 
-          SNAP="$(cast rpc evm_snapshot \
-            --rpc-url "$RPC" | tr -d '"' | tail -n 1)"
+      echo "HOLDER_SHARES_BEFORE=$(susde_balance "$HOLDER")"
+      echo "HOLDER_PENDING_BEFORE=$(pending_amount "$HOLDER")"
 
-          echo "HOLDER_SHARES_BEFORE=$(susde_bal "$HOLDER")"
-          echo "HOLDER_PENDING_BEFORE=$(pending_amount "$HOLDER")"
+      tx "$HOLDER" "$SUSDE" \
+        "cooldownShares(uint256)" "1000000000000000000"
 
-          tx "$HOLDER" "$SUSDE" \
-            "cooldownShares(uint256)" "1000000000000000000"
+      tx "$BLACKLIST_MANAGER" "$SUSDE" \
+        "addToBlacklist(address,bool)" "$HOLDER" "true"
 
-          tx "$BLACKLIST_MANAGER" "$SUSDE" \
-            "addToBlacklist(address,bool)" "$HOLDER" "true"
+      HAS_FULL="$(cast call "$SUSDE" \
+        "hasRole(bytes32,address)(bool)" "$FULL_ROLE" "$HOLDER" \
+        --rpc-url "$RPC")"
 
-          HAS_FULL="$(cast call "$SUSDE" \
-            "hasRole(bytes32,address)(bool)" "$FULL_ROLE" "$HOLDER" \
-            --rpc-url "$RPC")"
+      PENDING="$(pending_amount "$HOLDER")"
 
-          PENDING="$(pending_amount "$HOLDER")"
-          END="$(pending_end "$HOLDER")"
+      echo "FULL_RESTRICTED_ROLE_GRANTED=$HAS_FULL"
+      echo "PENDING_AFTER_COOLDOWN=$PENDING"
 
-          echo "FULL_RESTRICTED_ROLE_GRANTED=$HAS_FULL"
-          echo "PENDING_AFTER_COOLDOWN=$PENDING"
-          echo "COOLDOWN_END=$END"
+      test "$HAS_FULL" = "true"
+      test "$PENDING" -gt 0
 
-          test "$HAS_FULL" = "true"
-          test "$PENDING" -gt 0
+      rpc evm_increaseTime "$((DURATION + 5))" >/dev/null
+      rpc evm_mine >/dev/null
 
-          # Advance only the local fork.
-          # Keep the configured cooldown duration unchanged.
-          rpc evm_increaseTime "$((DURATION + 5))" >/dev/null
-          rpc evm_mine >/dev/null
+      SILO="$(cast call "$SUSDE" "silo()(address)" \
+        --rpc-url "$RPC" | tr -d '\r\n')"
 
-          SILO="$(silo_addr)"
-          echo "SILO_BEFORE_UNSTAKE=$(usde_bal "$SILO")"
-          echo "RECEIVER_USDE_BEFORE=$(usde_bal "$RECEIVER")"
-          echo "PENDING_BEFORE_UNSTAKE=$(pending_amount "$HOLDER")"
+      SILO_BEFORE="$(balance "$SILO")"
+      RECEIVER_BEFORE="$(balance "$RECEIVER")"
+      PENDING_BEFORE="$(pending_amount "$HOLDER")"
 
-          if tx "$HOLDER" "$SUSDE" "unstake(address)" "$RECEIVER"; then
-            echo "FULL_RESTRICTED_UNSTAKE=SUCCEEDED"
-            echo "PENDING_AFTER_UNSTAKE=$(pending_amount "$HOLDER")"
-            echo "SILO_AFTER_UNSTAKE=$(usde_bal "$SILO")"
-            echo "RECEIVER_USDE_AFTER=$(usde_bal "$RECEIVER")"
-            echo "INTERPRETATION=ROLE_ENFORCEMENT_MISMATCH_CANDIDATE"
-          else
-            echo "FULL_RESTRICTED_UNSTAKE=REVERTED"
-            cat /tmp/cast.err || true
-            echo "INTERPRETATION=NO_BYPASS_IN_THIS_PATH"
-          fi
+      echo "SILO_BEFORE_UNSTAKE=$SILO_BEFORE"
+      echo "RECEIVER_USDE_BEFORE=$RECEIVER_BEFORE"
+      echo "PENDING_BEFORE_UNSTAKE=$PENDING_BEFORE"
 
-          cast rpc evm_revert "$SNAP" >/dev/null
+      if tx "$HOLDER" "$SUSDE" "unstake(address)" "$RECEIVER"; then
+        echo "FULL_RESTRICTED_UNSTAKE=SUCCEEDED"
+        echo "PENDING_AFTER_UNSTAKE=$(pending_amount "$HOLDER")"
+        echo "SILO_AFTER_UNSTAKE=$(balance "$SILO")"
+        echo "RECEIVER_USDE_AFTER=$(balance "$RECEIVER")"
+        echo "INTERPRETATION=REQUIRES_MANUAL_SECURITY_REVIEW"
+      else
+        echo "FULL_RESTRICTED_UNSTAKE=REVERTED"
+        cat /tmp/cast.err || true
+        echo "INTERPRETATION=NO_BYPASS_IN_THIS_PATH"
+      fi
 
-          echo "STATE_REVERTED=YES"
-          echo "EXECUTION_MODE=LOCAL_FORK_ONLY"
-          echo "MAINNET_TRANSACTIONS=NONE"
-          echo "LIVE_EXECUTION=PROHIBITED"
-          echo "BOUNTY_CLAIM=NOT_ASSERTED"
+      rpc evm_revert "$SNAP" >/dev/null
 
-      - name: Stop isolated fork
-        if: always()
-        run: |
-          set +e
-          if [ -f anvil.pid ]; then
-            kill "$(cat anvil.pid)" 2>/dev/null || true
-          fi
-          echo "LOCAL_FORK_STOPPED=YES"
+      echo "STATE_REVERTED=YES"
+      echo "EXECUTION_MODE=LOCAL_FORK_ONLY"
+      echo "MAINNET_TRANSACTIONS=NONE"
+      echo "LIVE_EXECUTION=PROHIBITED"
+      echo "BOUNTY_CLAIM=NOT_ASSERTED"
+
+  - name: Stop isolated fork
+    if: always()
+    shell: bash
+    run: |
+      set +e
+      if [ -f anvil.pid ]; then
+        kill "$(cat anvil.pid)" 2>/dev/null || true
+      fi
+      echo "LOCAL_FORK_STOPPED=YES"
